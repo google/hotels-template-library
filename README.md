@@ -1,12 +1,3 @@
-# New Project Template
-
-This repository contains a template that can be used to seed a repository for a
-new Google open source project.
-
-See [go/releasing](http://go/releasing) (available externally at
-https://opensource.google/docs/releasing/) for more information about
-releasing a new Google open source project.
-
 ## Hotels Template Library
 
     Hotels Template Libary contains an open-source collection of C++ template
