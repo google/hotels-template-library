@@ -1,6 +1,6 @@
 ## Hotels Template Library
 
-    Hotels Template Libary contains an open-source collection of C++ template
+    Hotels Template Library contains an open-source collection of C++ template
     libaries that are developed to make C++ development easier, safer and more
     efficient.
 
