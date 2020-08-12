@@ -77,11 +77,11 @@ class left_right_strategy {
   using view_type = view<T>;
 
   template <typename T, typename Mutator>
-  void update_inplace(value_type<T>& value, Mutator&& mutate) {
+  void update_inplace(value_type<T>& value, const Mutator& mutate) {
     std::lock_guard lock{writer_mu_};
 
     // Apply the change to the inactive value and make it visible to readers
-    std::as_const(mutate)(value.get_inactive());
+    mutate(value.get_inactive());
     value.toggle();
     // Wait for residual readers to leave and toggle
     // Note: this can and should be replaced by std::atomic_wait in C++20
@@ -89,7 +89,7 @@ class left_right_strategy {
     reader_counts_.toggle();
     while (reader_counts_.get_inactive()) std::this_thread::yield();
     // Apply the change to the newly inactive value
-    std::as_const(mutate)(value.get_inactive());
+    mutate(value.get_inactive());
   }
 
   template <typename T>

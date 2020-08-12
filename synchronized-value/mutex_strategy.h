@@ -21,7 +21,7 @@ namespace synchronized_value {
 class mutex_strategy {
   template <typename T>
   class view {
-    std::lock_guard<std::mutex> lock;
+    std::unique_lock<std::mutex> lock;
     const T& val;
 
    public:

@@ -45,6 +45,20 @@ class atomic_shared_ptr {
       std::memory_order order = std::memory_order_seq_cst) const noexcept {
     return std::atomic_load_explicit(&val_, order);
   }
+  
+  bool compare_exchange_strong(
+      std::shared_ptr<T>& expected, std::shared_ptr<T> desired,
+      std::memory_order order = std::memory_order_seq_cst) noexcept {
+    return std::atomic_compare_exchange_strong_explicit(&val_, &expected,
+                                                        desired, order, order);
+  }
+
+  bool compare_exchange_weak(
+      std::shared_ptr<T>& expected, std::shared_ptr<T> desired,
+      std::memory_order order = std::memory_order_seq_cst) noexcept {
+    return std::atomic_compare_exchange_weak_explicit(&val_, &expected,
+                                                        desired, order, order);
+  }
 };
 
 // a simple shim struct to template specialize around std::shared_ptr<T>
@@ -73,8 +87,6 @@ class shared_ptr_rcu_strategy {
         : val_ptr(std::make_shared<T>(std::forward<Args>(args)...)) {}
   };
 
-  std::mutex writer_mu_;
-
  public:
   template <typename T>
   using value_type = forwarding_wrapper<T>;
@@ -82,11 +94,15 @@ class shared_ptr_rcu_strategy {
   template <typename T>
   using view_type = std::shared_ptr<const T>;
 
-  template <typename T, typename Mutator>
-  void update_copy(value_type<T>& value, Mutator&& mutate) {
-    std::lock_guard lock{writer_mu_};
-    value.val_ptr = std::make_shared<T>(
-        std::forward<Mutator>(mutate)(std::as_const(*value.val_ptr.load())));
+  template <typename T, typename CopyUpdate>
+  void update_copy(value_type<T>& value, CopyUpdate&& update) {
+    std::shared_ptr<T> val_ptr, new_val_ptr;
+    // If someone else changed the value in between, redo the operation
+    do {
+      val_ptr = value.val_ptr.load();
+      new_val_ptr = std::make_shared<T>(std::forward<CopyUpdate>(update)(std::as_const(*val_ptr)));
+    }
+    while (!value.val_ptr.compare_exchange_strong(val_ptr, new_val_ptr));
   }
 
   template <typename T>

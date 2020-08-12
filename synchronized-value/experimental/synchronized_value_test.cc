@@ -12,20 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "synchronized-value/src/synchronized_value.h"
+#include "synchronized-value/src/experimental/synchronized_value.h"
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
 
 #include "gtest/gtest.h"
-#include "synchronized-value/src/absl_mutex_strategy.h"
-#include "synchronized-value/src/left_right_strategy.h"
 #include "synchronized-value/src/mutex_strategy.h"
 #include "synchronized-value/src/rw_mutex_strategy.h"
-#include "synchronized-value/src/shared_ptr_rcu_strategy.h"
 
 namespace synchronized_value {
 namespace synchronized_value_internal {
@@ -53,16 +51,16 @@ TYPED_TEST_SUITE_P(SynchronizedValueTest);
 
 TYPED_TEST_P(SynchronizedValueTest, NonMovableAndCopyable) {
   static_assert(
-      std::is_copy_constructible_v<synchronized_value<int, TypeParam>> ==
+      std::is_copy_constructible_v<synchronized_value<int, mutex_strategy>> ==
           false,
       "synchronized_value must be non-copyable.");
   static_assert(std::is_move_constructible<
-                    synchronized_value<int, TypeParam>>::value == false,
+                    synchronized_value<int, mutex_strategy>>::value == false,
                 "synchronized_value must be non-movable.");
 }
 
 TYPED_TEST_P(SynchronizedValueTest, ReadSingleThread) {
-  synchronized_value<int, TypeParam> sv(5);
+  synchronized_value<int, mutex_strategy> sv(5);
   // Try all different lambda signatures
   sv.read([](const int& x) { EXPECT_EQ(x, 5); });
   sv.read([](const int x) { EXPECT_EQ(x, 5); });
@@ -75,8 +73,29 @@ TYPED_TEST_P(SynchronizedValueTest, ReadSingleThread) {
   EXPECT_EQ(sv.read([](auto x) { return std::vector{x}; }), std::vector{5});
 }
 
+TYPED_TEST_P(SynchronizedValueTest, ReadWhen) {
+  synchronized_value<int, mutex_strategy> sv(5);
+  sv.read_when([](int x) { EXPECT_EQ(x, 5); }, [](int x) { return x > 0; });
+  auto thread = std::thread([&]() {
+    sv.read_when([](int x) { EXPECT_EQ(x, 7); }, [](int x) { return x > 5; });
+  });
+  sv.update_copy([](int x) { return 7; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 7); });
+}
+
+TYPED_TEST_P(SynchronizedValueTest, GetViewWhen) {
+  synchronized_value<int, mutex_strategy> sv(5);
+  EXPECT_EQ(5, *sv.get_view_when([](int x) { return x > 0; }));
+  auto thread = std::thread(
+      [&]() { EXPECT_EQ(7, *sv.get_view_when([](int x) { return x > 5; })); });
+  sv.update_copy([](int x) { return 7; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 7); });
+}
+
 TYPED_TEST_P(SynchronizedValueTest, UpdateCopySingleThread) {
-  synchronized_value<int, TypeParam> sv(5);
+  synchronized_value<int, mutex_strategy> sv(5);
   sv.update_copy([](const int& x) { return x + 1; });
   sv.read([](const int& x) { EXPECT_EQ(x, 6); });
   // Try all different lambda signatures
@@ -90,10 +109,37 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateCopySingleThread) {
   // Try setting the value
   sv.update_copy([](auto _) { return 6; });
   sv.read([](const int& x) { EXPECT_EQ(x, 6); });
+
+  // Try getting a return value
+  std::string seven = sv.update_copy(
+      [](int x) { return std::make_pair(x + 1, std::to_string(x + 1)); });
+  EXPECT_EQ(seven, "7");
+  sv.read([](const int& x) { EXPECT_EQ(x, 7); });
+}
+
+TYPED_TEST_P(SynchronizedValueTest, UpdateCopyWhen) {
+  synchronized_value<int, mutex_strategy> sv(5);
+  sv.update_copy_when([](int _) { return 6; }, [](int x) { return x > 0; });
+  sv.read([](int x) { EXPECT_EQ(6, x); });
+  auto thread = std::thread([&]() {
+    sv.update_copy_when([](int _) { return 8; }, [](int x) { return x > 6; });
+  });
+  sv.update_copy([](int x) { return 7; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 8); });
+  thread = std::thread([&]() {
+    EXPECT_EQ("9",
+              sv.update_copy_when(
+                  [](int x) { return std::make_pair(10, std::to_string(x)); },
+                  [](int x) { return x > 8; }));
+  });
+  sv.update_copy([](int x) { return 9; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 10); });
 }
 
 TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceSingleThread) {
-  synchronized_value<int, TypeParam> sv(5);
+  synchronized_value<int, mutex_strategy> sv(5);
   sv.update_inplace([](int& x) { x++; });
   sv.read([](const int& x) { EXPECT_EQ(x, 6); });
   // Try all different lambda signatures
@@ -101,6 +147,29 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceSingleThread) {
   // Try setting the value
   sv.update_inplace([](auto& x) { x = 6; });
   sv.read([](const int& x) { EXPECT_EQ(x, 6); });
+  // Try getting a return value
+  EXPECT_EQ("7", sv.update_inplace([](int& x) { return std::to_string(++x); }));
+  sv.read([](const int& x) { EXPECT_EQ(x, 7); });
+}
+
+TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceWhen) {
+  synchronized_value<int, mutex_strategy> sv(5);
+  sv.update_inplace_when([](int& x) { x = 6; }, [](int x) { return x > 0; });
+  sv.read([](int x) { EXPECT_EQ(6, x); });
+  auto thread = std::thread([&]() {
+    sv.update_inplace_when([](int& x) { x = 8; }, [](int x) { return x > 6; });
+  });
+  sv.update_copy([](int x) { return 7; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 8); });
+  thread = std::thread([&]() {
+    EXPECT_EQ("9",
+              sv.update_inplace_when([](int& x) { return std::to_string(x++); },
+                                     [](int x) { return x > 8; }));
+  });
+  sv.update_copy([](int x) { return 9; });
+  thread.join();
+  sv.read([](int x) { EXPECT_EQ(x, 10); });
 }
 
 TYPED_TEST_P(SynchronizedValueTest, DefaultConstructible) {
@@ -116,11 +185,11 @@ TYPED_TEST_P(SynchronizedValueTest, DefaultConstructible) {
 }
 
 TYPED_TEST_P(SynchronizedValueTest, GetViewSingleThread) {
-  synchronized_value<std::vector<int>, TypeParam> vec{
+  synchronized_value<std::vector<int>, mutex_strategy> vec{
       std::initializer_list<int>{1, 2, 3, 4}};
   EXPECT_EQ(vec.get_view()->size(), 4);
 
-  synchronized_value<int, TypeParam> num{4};
+  synchronized_value<int, mutex_strategy> num{4};
   EXPECT_EQ(*num.get_view(), 4);
 }
 
@@ -241,11 +310,10 @@ REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest, NonMovableAndCopyable,
                             UpdateInplaceSingleThread, DefaultConstructible,
                             GetViewSingleThread, MoveonlyUpdateInplace,
                             UpdateInplaceMultithread, UpdateCopyMultithread,
-                            MapUpdateInplaceMulti, MapUpdateCopyMulti);
+                            MapUpdateInplaceMulti, MapUpdateCopyMulti, ReadWhen,
+                            GetViewWhen, UpdateCopyWhen, UpdateInplaceWhen);
 
-using strategies = ::testing::Types<mutex_strategy, rw_mutex_strategy,
-                                    absl_mutex_strategy, left_right_strategy,
-                                    shared_ptr_rcu_strategy>;
+using strategies = ::testing::Types<mutex_strategy, rw_mutex_strategy>;
 INSTANTIATE_TYPED_TEST_SUITE_P(SVTests, SynchronizedValueTest, strategies);
 
 }  // namespace
