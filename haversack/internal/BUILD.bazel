@@ -1,0 +1,93 @@
+#
+# Copyright 2021 Google LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+licenses(["notice"])
+
+package(
+    default_hdrs_check = "strict",
+    default_visibility = [
+        "//haversack:__subpackages__",
+    ],
+)
+
+cc_library(
+    name = "basic_tuple",
+    hdrs = ["basic_tuple.h"],
+    deps = [
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "type_set",
+    hdrs = ["type_set.h"],
+    deps = [
+        ":basic_tuple",
+        ":type",
+    ],
+)
+
+cc_library(
+    name = "type",
+    hdrs = [
+        "type.h",
+    ],
+    deps = [":basic_tuple"],
+)
+
+cc_library(
+    name = "haversack_impl",
+    hdrs = ["haversack_impl.h"],
+    deps = [
+        ":basic_tuple",
+        ":type",
+        ":type_set",
+        ":util",
+    ],
+)
+
+cc_library(
+    name = "util",
+    hdrs = ["util.h"],
+)
+
+cc_test(
+    name = "basic_tuple_test",
+    srcs = ["basic_tuple_test.cc"],
+    deps = [
+        ":basic_tuple",
+        ":type",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "type_set_test",
+    srcs = ["type_set_test.cc"],
+    deps = [
+        ":type_set",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "type_test",
+    srcs = ["type_test.cc"],
+    deps = [
+        ":type",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

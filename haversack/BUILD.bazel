@@ -1,0 +1,65 @@
+#
+# Copyright 2021 Google LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+licenses(["notice"])
+
+cc_library(
+    name = "haversack",
+    hdrs = [
+        "haversack.h",
+    ],
+    deps = [
+        "//haversack/internal:basic_tuple",
+        "//haversack/internal:haversack_impl",
+        "//haversack/internal:type",
+        "//haversack/internal:type_set",
+        "//haversack/internal:util",
+    ],
+)
+
+cc_library(
+    name = "haversack_test_util",
+    testonly = True,
+    hdrs = ["haversack_test_util.h"],
+    deps = [
+        ":haversack",
+        "//haversack/internal:basic_tuple",
+    ],
+)
+
+cc_test(
+    name = "haversack_test",
+    srcs = [
+        "haversack_test.cc",
+        "haversack_test.nc.h",
+    ],
+    deps = [
+        ":haversack",
+        ":haversack_test_util",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "unsafe_haversack_test",
+    srcs = ["unsafe_haversack_test.cc"],
+    tags = ["noasan"],  # We verify some test-only behavior that does some unsafe things with nullptrs.
+    deps = [
+        ":haversack",
+        ":haversack_test_util",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
