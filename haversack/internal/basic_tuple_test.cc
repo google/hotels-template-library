@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/hotels_template_library/haversack/internal/basic_tuple.h"
+#include "./basic_tuple.h"
 
 #include "testing/base/public/gmock.h"
 #include "testing/base/public/gunit.h"
-#include "third_party/hotels_template_library/haversack/internal/type.h"
+#include "./type.h"
 
 namespace hotels::haversack::internal {
 namespace {

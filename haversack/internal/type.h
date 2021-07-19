@@ -19,7 +19,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "third_party/hotels_template_library/haversack/internal/basic_tuple.h"
+#include "./basic_tuple.h"
 
 namespace hotels::haversack::internal::types {
 namespace internal_type {

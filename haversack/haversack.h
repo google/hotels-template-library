@@ -70,11 +70,11 @@
 #include <type_traits>
 #include <utility>
 
-#include "third_party/hotels_template_library/haversack/internal/basic_tuple.h"
-#include "third_party/hotels_template_library/haversack/internal/haversack_impl.h"
-#include "third_party/hotels_template_library/haversack/internal/type.h"
-#include "third_party/hotels_template_library/haversack/internal/type_set.h"
-#include "third_party/hotels_template_library/haversack/internal/util.h"
+#include "./internal/basic_tuple.h"
+#include "./internal/haversack_impl.h"
+#include "./internal/type.h"
+#include "./internal/type_set.h"
+#include "./internal/util.h"
 
 namespace hotels::haversack {
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/hotels_template_library/haversack/internal/type_set.h"
+#include "./type_set.h"
 
 #include "testing/base/public/gmock.h"
 #include "testing/base/public/gunit.h"

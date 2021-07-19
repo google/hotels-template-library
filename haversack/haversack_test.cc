@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/hotels_template_library/haversack/haversack.h"
+#include "./haversack.h"
 
 #include <type_traits>
 
 #include "testing/base/public/gmock.h"
 #include "testing/base/public/gunit.h"
-#include "third_party/hotels_template_library/haversack/haversack_test.nc.h"
-#include "third_party/hotels_template_library/haversack/haversack_test_util.h"
+#include "./haversack_test.nc.h"
+#include "./haversack_test_util.h"
 
 namespace hotels::haversack {
 namespace {
