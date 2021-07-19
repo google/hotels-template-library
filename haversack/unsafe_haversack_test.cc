@@ -14,8 +14,8 @@
 
 #include "testing/base/public/gmock.h"
 #include "testing/base/public/gunit.h"
-#include "third_party/hotels_template_library/haversack/haversack.h"
-#include "third_party/hotels_template_library/haversack/haversack_test_util.h"
+#include "./haversack.h"
+#include "./haversack_test_util.h"
 
 namespace hotels::haversack {
 namespace {

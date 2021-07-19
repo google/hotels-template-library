@@ -17,7 +17,7 @@
 
 #include <utility>
 
-#include "third_party/hotels_template_library/haversack/internal/util.h"
+#include "./util.h"
 
 namespace hotels::haversack::internal {
 
