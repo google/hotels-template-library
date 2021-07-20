@@ -11,3 +11,11 @@
     You may obtain a copy of the License at
 
         https://www.apache.org/licenses/LICENSE-2.0
+
+## Usage
+
+All the libraries in the hotels-template-library are header-only.
+
+### Compiler Explorer
+
+Hotels Template Library is now available in Compiler Explorer at https://godbolt.org; e.g. https://godbolt.org/z/86x8Ydnrn.
