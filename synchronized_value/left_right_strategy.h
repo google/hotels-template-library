@@ -19,8 +19,8 @@
 #include <atomic>
 #include <thread>
 
-#include "third_party/absl/synchronization/mutex.h"
-#include "third_party/hotels_template_library/synchronized_value/synchronized_value.h"
+#include <absl/synchronization/mutex.h>
+#include "synchronized_value/synchronized_value.h"
 
 namespace htls {
 namespace synchronized_value_internal {
@@ -71,18 +71,18 @@ class LeftRightStrategy {
 
  public:
   template <typename T>
-  struct value_type {
+  struct ValueType {
     synchronized_value_internal::Toggleable<T> value;
     mutable synchronized_value_internal::Toggleable<count_t> reader_counts;
     template <typename... Args>
-    explicit value_type(Args&&... args) : value{std::forward<Args>(args)...} {}
+    explicit ValueType(Args&&... args) : value{std::forward<Args>(args)...} {}
   };
 
   template <typename T>
   using ViewType = View<T>;
 
   template <typename T, typename Mutator>
-  static void UpdateInplace(absl::Mutex&, value_type<T>& value,
+  static void UpdateInplace(absl::Mutex&, ValueType<T>& value,
                             const Mutator& mutate) {
     // Apply the change to the inactive value and make it visible to readers
     mutate(value.value.GetInactive());
@@ -97,13 +97,13 @@ class LeftRightStrategy {
   }
 
   template <typename T>
-  static ViewType<T> MakeView(absl::Mutex&, const value_type<T>& value) {
+  static ViewType<T> MakeView(absl::Mutex&, const ValueType<T>& value) {
     count_t& count = value.reader_counts.GetActive();
     ++count;
     return ViewType<T>(value.value.GetActive(), count);
   }
   template <typename T, typename Predicate>
-  static ViewType<T> MakeView(absl::Mutex& mutex, const value_type<T>& value,
+  static ViewType<T> MakeView(absl::Mutex& mutex, const ValueType<T>& value,
                               const Predicate& predicate) {
     MovableReaderLock lock(mutex, predicate);
     count_t& count = value.reader_counts.GetActive();
@@ -111,9 +111,10 @@ class LeftRightStrategy {
     return ViewType<T>(value.value.GetActive(), count);
   }
 
-  template <typename T>
-  static const T& GetUnsafeValue(const value_type<T>& value) {
-    return value.value.GetActive();
+  template <typename T, typename Predicate>
+  static bool EvaluateUpdateLockedPredicate(const ValueType<T>& value,
+                                            const Predicate& predicate) {
+    return predicate(value.value.GetActive());
   }
 };
 }  // namespace htls

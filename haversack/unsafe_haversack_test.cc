@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "./haversack.h"
-#include "./haversack_test_util.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "haversack/haversack.h"
+#include "haversack/haversack_test_util.h"
 
 namespace hotels::haversack {
 namespace {

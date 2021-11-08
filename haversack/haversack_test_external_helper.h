@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_
-#define THIRD_PARTY_HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_
+#ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_
+#define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_
 
 #include <memory>
 #include <utility>
@@ -40,4 +40,4 @@ not_null(T) -> not_null<T>;
 
 }  // namespace hotels
 
-#endif  // THIRD_PARTY_HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_
+#endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_NC_H_

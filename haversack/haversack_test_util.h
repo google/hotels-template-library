@@ -17,8 +17,8 @@
 
 #include <type_traits>
 
-#include "./haversack.h"
-#include "./internal/basic_tuple.h"
+#include "haversack/haversack.h"
+#include "haversack/internal/basic_tuple.h"
 
 namespace hotels::haversack {
 namespace internal {

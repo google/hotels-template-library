@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "./haversack.h"
+#include "haversack/haversack.h"
 
 #include <type_traits>
 
-#include "testing/base/public/gmock.h"
-#include "testing/base/public/gunit.h"
-#include "./haversack_test.nc.h"
-#include "./haversack_test_util.h"
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+#include "haversack/haversack_test_external_helper.h"
+#include "haversack/haversack_test_util.h"
 
 namespace hotels::haversack {
 namespace {
@@ -30,6 +30,9 @@ namespace {
 struct A {
   explicit A(int i = 0) : i(i) {}
   int i = 0;
+
+  virtual ~A() = default;
+  virtual const char* ClassName() const { return "A"; }
 };
 struct B {
   explicit B(int i = 0) : i(i) {}
@@ -112,11 +115,63 @@ struct HandlerHSack : Haversack<Deps<AHSack, BHSack, CHSack>> {
   using HaversackT::HaversackT;
 };
 
+struct Nonmoveable {
+  Nonmoveable(int i, int j) : i(i), j(j) {}
+
+  Nonmoveable(const Nonmoveable&) = delete;
+  Nonmoveable(Nonmoveable&&) = delete;
+  Nonmoveable& operator=(const Nonmoveable&) = delete;
+  Nonmoveable& operator=(Nonmoveable&&) = delete;
+  virtual ~Nonmoveable() = default;
+
+  virtual int Getter() const { return i; }
+
+  int i = 0;
+  int j = 0;
+};
+
+struct NonmoveableChild : Nonmoveable {
+  NonmoveableChild(int i_, int j_, int k) : Nonmoveable(i_, j_), k(k) {}
+  int Getter() const override { return k; }
+  int k = 0;
+};
+
+int MyFunc(A, B, Haversack<C, D>) { return 5; }
+int MyFuncTakingRef(A, B, const Haversack<E, F>&) { return 10; }
+
+struct NonCopyableFunctor {
+  NonCopyableFunctor() = default;
+  NonCopyableFunctor(const NonCopyableFunctor&) = delete;
+  NonCopyableFunctor& operator=(const NonCopyableFunctor&) = delete;
+  NonCopyableFunctor(NonCopyableFunctor&&) = delete;
+  NonCopyableFunctor& operator=(NonCopyableFunctor&&) = delete;
+  int operator()(Haversack<A, B>) const { return 10; }
+};
+constexpr NonCopyableFunctor non_copyable_functor;
+
+struct VirtualParent {
+  virtual int DoStuff() const { return 0; }
+  virtual ~VirtualParent() = default;
+};
+struct VirtualChild : VirtualParent {
+  explicit VirtualChild(int i) : i(i) {}
+  int DoStuff() const override { return i; }
+
+  int i = 1;
+};
+
+struct SubA : A {
+  using A::A;
+  const char* ClassName() const override { return "SubA"; }
+};
+
+struct TagA {};
+
 MATCHER_P(CanGet, type, "") {
-  *result_listener << "Cannot get a "
-                   << internal::debug_type_name_v<
-                          std::decay_t<decltype(type)>> << " from a "
-                   << internal::debug_type_name_v<std::decay_t<decltype(arg)>>;
+  *result_listener
+      << "Cannot get a "
+      << internal::debug_type_name_v<std::decay_t<decltype(type)>> << " from a "
+      << internal::debug_type_name_v<std::decay_t<decltype(arg)>>;
   return internal::types::IsValidExpr(
       arg,
       [=](const auto& sack)
@@ -254,27 +309,6 @@ TEST_F(CtorAndAccessTest, GHSackFromFHSack) {
   EXPECT_THAT(cxt.Get<L>().i, 7);
 }
 
-struct Nonmoveable {
-  Nonmoveable(int i, int j) : i(i), j(j) {}
-
-  Nonmoveable(const Nonmoveable&) = delete;
-  Nonmoveable(Nonmoveable&&) = delete;
-  Nonmoveable& operator=(const Nonmoveable&) = delete;
-  Nonmoveable& operator=(Nonmoveable&&) = delete;
-  virtual ~Nonmoveable() = default;
-
-  virtual int Getter() const { return i; }
-
-  int i = 0;
-  int j = 0;
-};
-
-struct NonmoveableChild : Nonmoveable {
-  NonmoveableChild(int i_, int j_, int k) : Nonmoveable(i_, j_), k(k) {}
-  int Getter() const override { return k; }
-  int k = 0;
-};
-
 TEST_F(HaversackTest, Insert) {
   Haversack<Nonmoveable> cxt =
       Haversack<>().Insert(std::make_shared<Nonmoveable>(100, 200));
@@ -336,6 +370,15 @@ TEST_F(HaversackTest, InsertNonowning) {
   EXPECT_THAT(a.i, 10);
 }
 
+TEST_F(HaversackTest, LRefInsert) {
+  Haversack<> base;
+  Haversack<Nonmoveable> cxt =
+      base.Insert(std::make_shared<Nonmoveable>(100, 200));
+  EXPECT_THAT(cxt.Get<Nonmoveable>().i, 100);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().j, 200);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
+}
+
 TEST_F(HaversackTest, Copyable) {
   AHSack cxt = handler_cxt_;
   AHSack copy = cxt;
@@ -387,19 +430,6 @@ TEST_F(HaversackTest, CannotWithoutNonExistentType) {
       handler_cxt_.Without<G>());
 }
 
-int MyFunc(A, B, Haversack<C, D>) { return 5; }
-int MyFuncTakingRef(A, B, const Haversack<E, F>&) { return 10; }
-
-struct NonCopyableFunctor {
-  NonCopyableFunctor() = default;
-  NonCopyableFunctor(const NonCopyableFunctor&) = delete;
-  NonCopyableFunctor& operator=(const NonCopyableFunctor&) = delete;
-  NonCopyableFunctor(NonCopyableFunctor&&) = delete;
-  NonCopyableFunctor& operator=(NonCopyableFunctor&&) = delete;
-  int operator()(Haversack<A, B>) const { return 10; }
-};
-constexpr NonCopyableFunctor non_copyable_functor;
-
 TEST_F(HaversackTest, FunctionCallsDependency) {
   using HSack = Haversack<Calls<MyFunc>>;
   HSack cxt = HSack(absl::make_unique<C>(100), absl::make_unique<D>(101));
@@ -432,17 +462,6 @@ TEST(HaversackCtor, Pointer) {
 
 TEST(HaversackCtor, Default) { Haversack<> cxt; }
 
-struct VirtualParent {
-  virtual int DoStuff() const { return 0; }
-  virtual ~VirtualParent() = default;
-};
-struct VirtualChild : VirtualParent {
-  explicit VirtualChild(int i) : i(i) {}
-  int DoStuff() const override { return i; }
-
-  int i = 1;
-};
-
 TEST(HaversackCtor, UpcastWithoutSlicing) {
   Haversack<VirtualParent> sack(std::make_unique<VirtualChild>(10));
   EXPECT_EQ(sack.Get<VirtualParent>().DoStuff(), 10);
@@ -454,7 +473,7 @@ TEST(HaversackCtor, TakeShared) {
 }
 
 TEST(HaversackCtor, TakeNotNullShared) {
-  Haversack<A> sack(not_null(std::make_shared<A>(10)));
+  Haversack<A> sack(gsl::not_null(std::make_shared<A>(10)));
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
@@ -464,7 +483,7 @@ TEST(HaversackCtor, TakeUnique) {
 }
 
 TEST(HaversackCtor, TakeNotNullUnique) {
-  Haversack<A> sack(not_null(std::make_unique<A>(10)));
+  Haversack<A> sack(gsl::not_null(std::make_unique<A>(10)));
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
@@ -476,15 +495,23 @@ TEST(HaversackCtor, TakeRaw) {
 
 TEST(HaversackCtor, TakeNotNullRaw) {
   A a{10};
-  Haversack<A> sack{not_null(&a)};
+  Haversack<A> sack{gsl::not_null(&a)};
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
 TEST(HaversackCtor, WrongArity) {
   EXPECT_NON_COMPILE(
-      "TargetMatches<hotels::haversack::\\(anonymous namespace\\)::A \\*>.*The "
+      "TargetMatches<hotels::haversack::\\(anonymous namespace\\)::A>.*The "
       "target type doesn\\'t have any matches",
-      Haversack<A*, B>(absl::make_unique<B>(2)));
+      Haversack<A, B>(absl::make_unique<B>(2)));
+}
+
+TEST(HaversackCtor, WrongArityNullable) {
+  EXPECT_NON_COMPILE(
+      "TargetMatches<hotels::haversack::Nullable<hotels::haversack::\\("
+      "anonymous namespace\\)::A>>.*The "
+      "target type doesn\\'t have any matches",
+      Haversack<Nullable<A>, B>(absl::make_unique<B>(2)));
 }
 
 TEST(HaversackCtor, NoArgumentMatch) {
@@ -515,10 +542,6 @@ TEST(HaversackCtor, VagueArgumentMatch) {
         Haversack<A> sack(&a, &a);
       });
 }
-
-struct SubA : A {
-  using A::A;
-};
 
 TEST(HaversackCtor, VagueParameterMatch) {
   EXPECT_NON_COMPILE(
@@ -586,11 +609,203 @@ TEST(HaversackCtor, CannotConstToKnownThreadSafe) {
       });
 }
 
+TEST(HaversackCtor, NonPtrArgumentsGiveGoodMessage) {
+  EXPECT_NON_COMPILE(
+      "One of the Haversack constructor arguments wasn't a pointer when it "
+      "should have been .or it wasn't supported pointer..",
+      { Haversack<A> sack(A{}); });
+}
+
 TEST(HaversackDefinitionOrder, DirectDepsLast) {
   EXPECT_NON_COMPILE(
       "All `Calls` and other directives must come before any "
       "direct dependencies.",
       { absl::optional<Haversack<A, Deps<AHSack>>> dependencies; });
+}
+
+TEST(HaversackNullable, RegularDoesntAcceptNullptr) {
+  EXPECT_DEATH(Haversack<A>(static_cast<A*>(nullptr)),
+               "Pointers should never be null in haversack");
+}
+
+TEST(HaversackNullable, AcceptsNullptr) {
+  Haversack<Nullable<A>> deps{static_cast<A*>(nullptr)};
+}
+
+TEST(HaversackNullable, GetPtr) {
+  A a(1);
+  Haversack<Nullable<A>> deps{&a};
+  EXPECT_THAT(deps.Get<Nullable<A>>(), &a);
+}
+
+TEST(HaversackNullable, GetNullptr) {
+  Haversack<Nullable<A>> deps{static_cast<A*>(nullptr)};
+  EXPECT_THAT(deps.Get<Nullable<A>>(), nullptr);
+}
+
+TEST(HaversackNullable, NullableKnownThreadSafe) {
+  A a(1);
+  Haversack<Nullable<KnownThreadSafe<A>>> deps(&a);
+  deps.Get<Nullable<KnownThreadSafe<A>>>()->i = 5;
+  EXPECT_THAT(a.i, 5);
+}
+
+TEST(HaversackNullable, KnownTheadSafeNullableNotAllowed) {
+  EXPECT_NON_COMPILE(
+      "See internal::WrappingMetadataOrder for more information about type "
+      "wrapping order.",
+      { absl::optional<Haversack<KnownThreadSafe<Nullable<A>>>> deps; });
+}
+
+TEST(HaversackNullable, NullableAndRegular) {
+  A a{1};
+  Haversack<A, Nullable<A>> deps{
+      Haversack<>().Insert<Nullable<A>>(static_cast<A*>(nullptr)), &a};
+  EXPECT_THAT(deps.Get<Nullable<A>>(), testing::IsNull());
+  EXPECT_THAT(deps.Get<A>().i, 1);
+}
+
+TEST(HaversackNullable, NullableProvidesRegular) {
+  A a{1};
+  B b{2};
+  using RequiredChild = Haversack<A, B>;
+  using NullableParent =
+      Haversack<Deps<RequiredChild>, Provides<A>, Nullable<A>>;
+  NullableParent parent{&a, &b};
+  RequiredChild child{parent, parent.Get<Nullable<A>>()};
+  EXPECT_THAT(child.Get<A>().i, 1);
+  EXPECT_THAT(child.Get<B>().i, 2);
+}
+
+TEST(HaversackNullable, NullableFromConst) {
+  const A a{1};
+  Haversack<Nullable<A>> deps{&a};
+  EXPECT_THAT(deps.Get<Nullable<A>>()->i, 1);
+}
+
+TEST(HaversackNullable, ReplaceNullableExplicit) {
+  A a{1};
+  Haversack<Nullable<A>> deps{&a};
+  deps = deps.Replace<Nullable<A>>(nullptr);
+  EXPECT_THAT(deps.Get<Nullable<A>>(), testing::IsNull());
+}
+
+TEST(HaversackNullable, ReplaceNullableStaticCast) {
+  A a{1};
+  Haversack<Nullable<A>> deps{&a};
+  deps = deps.Replace(static_cast<A*>(nullptr));
+  EXPECT_THAT(deps.Get<Nullable<A>>(), testing::IsNull());
+}
+
+TEST(Haversack, AllWrappers) {
+  Haversack<A, KnownThreadSafe<A>, Nullable<A>, Nullable<KnownThreadSafe<A>>>
+      deps = Haversack<>()
+                 .Insert<A>(std::make_shared<A>(1))
+                 .Insert<KnownThreadSafe<A>>(std::make_shared<A>(2))
+                 .Insert<Nullable<A>>(std::make_shared<A>(3))
+                 .Insert<Nullable<KnownThreadSafe<A>>>(std::make_shared<A>(4));
+  EXPECT_THAT(deps.Get<A>().i, 1);
+  EXPECT_THAT(deps.Get<KnownThreadSafe<A>>().i, 2);
+  EXPECT_THAT(deps.Get<Nullable<A>>()->i, 3);
+  EXPECT_THAT(deps.Get<Nullable<KnownThreadSafe<A>>>()->i, 4);
+}
+
+TEST(HaversackTagged, CreateHaversackWithTagged) {
+  Haversack<Tagged<A, TagA>> deps{std::make_shared<A>(1)};
+}
+
+TEST(HaversackTagged, GetTagged) {
+  Haversack<Tagged<A, TagA>> deps{std::make_shared<A>(1)};
+  EXPECT_EQ((deps.Get<Tagged<A, TagA>>().i), 1);
+}
+
+TEST(HaversackTagged, GetByTag) {
+  Haversack<Tagged<A, TagA>> deps{std::make_shared<A>(1)};
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+}
+
+TEST(HaversackTagged, DistinguishTypesByTag) {
+  Haversack<Tagged<A, TagA>, Tagged<A, struct TagB>> deps{
+      Haversack<Tagged<A, TagA>>{std::make_shared<A>(1)},
+      std::make_shared<A>(2)};
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+  EXPECT_EQ(deps.Get<struct TagB>().i, 2);
+}
+
+TEST(HaversackTagged, ConvertMakeTagged) {
+  Haversack<Tagged<A, TagA>> deps{MakeTagged<TagA>(std::make_shared<SubA>(1))};
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+  EXPECT_EQ(deps.Get<TagA>().ClassName(), "SubA");
+}
+
+TEST(HaversackTagged, CannotRepeatTag) {
+  EXPECT_NON_COMPILE(
+      "A Haversack cannot have multiple direct dependencies with the same Tag.",
+      (Haversack<Tagged<A, TagA>, Tagged<B, TagA>>{std::make_shared<A>(1),
+                                                   std::make_shared<B>(2)}));
+}
+
+TEST(HaversackTagged, RepeatTagsAtDifferentLevels) {
+  using Child = Haversack<Tagged<B, TagA>>;
+  Haversack<Deps<Child>, Tagged<A, TagA>> parent{std::make_shared<A>(1),
+                                                 std::make_shared<B>(2)};
+  Child child = parent;
+  EXPECT_EQ(parent.Get<TagA>().i, 1);
+  EXPECT_EQ(child.Get<TagA>().i, 2);
+}
+
+TEST(HaversackTagged, ConstructMultipleTagged) {
+  Haversack<Tagged<A, TagA>, Tagged<A, struct TagB>> deps{
+      MakeTagged<TagA>(std::make_shared<A>(1)),
+      MakeTagged<struct TagB>(std::make_shared<A>(2))};
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+  EXPECT_EQ(deps.Get<struct TagB>().i, 2);
+}
+
+TEST(HaversackTagged, Insert) {
+  auto deps = Haversack<>().Insert(MakeTagged<TagA>(std::make_shared<A>(1)));
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+}
+
+TEST(HaversackTagged, ExplicitInsert) {
+  auto deps = Haversack<>().Insert<Tagged<A, TagA>>(std::make_shared<A>(1));
+  EXPECT_EQ(deps.Get<TagA>().i, 1);
+}
+
+TEST(Haversack, TaggedNullableKnownThreadSafe) {
+  Haversack<Tagged<Nullable<KnownThreadSafe<A>>, TagA>> deps{
+      static_cast<A*>(nullptr)};
+  EXPECT_THAT(deps.Get<TagA>(), testing::IsNull());
+  deps = deps.Replace(std::make_shared<A>(1));
+  EXPECT_EQ(deps.Get<TagA>()->i, 1);
+  deps.Get<TagA>()->i = 10;
+  EXPECT_EQ(deps.Get<TagA>()->i, 10);
+}
+
+TEST(Haversack, NoReferences) {
+  EXPECT_NON_COMPILE("Reference types are not allowed in Haversack.",
+                     sizeof(Haversack<A&>));
+}
+
+TEST(Haversack, NoExplicitConst) {
+  EXPECT_NON_COMPILE(
+      "Constness is implicit in Haversack. KnownThreadSafe "
+      "should be used for non-const types instead.",
+      sizeof(Haversack<const A>));
+}
+
+TEST(Haversack, NoTagDependencies) {
+  EXPECT_NON_COMPILE("Don't use Tag types as dependencies.",
+                     sizeof(Haversack<A, Tagged<A, A>>));
+}
+
+TEST(Haversack, GetSharedNoCopy) {
+  // GetShared should return a reference to the pointer inside the haversack
+  // without any shared_ptr copies.
+  Haversack<A> deps(std::make_shared<A>(1));
+  const std::shared_ptr<const A>& first = deps.GetShared<A>();
+  const std::shared_ptr<const A>& second = deps.GetShared<A>();
+  EXPECT_EQ(&first, &second);
 }
 
 }  // namespace

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "third_party/hotels_template_library/synchronized_value/synchronized_value.h"
+#include "synchronized_value/synchronized_value.h"
 
 #include <functional>
 #include <memory>
@@ -20,11 +20,12 @@
 #include <type_traits>
 #include <unordered_map>
 
-#include "testing/base/public/gunit.h"
-#include "third_party/absl/container/node_hash_map.h"
-#include "third_party/hotels_template_library/synchronized_value/absl_mutex_strategy.h"
-#include "third_party/hotels_template_library/synchronized_value/left_right_strategy.h"
-#include "third_party/hotels_template_library/synchronized_value/shared_ptr_rcu_strategy.h"
+#include <gtest/gtest.h>
+#include <absl/container/node_hash_map.h>
+#include "synchronized_value/absl_mutex_strategy.h"
+#include "synchronized_value/left_right_strategy.h"
+#include "synchronized_value/shared_ptr_rcu_strategy.h"
+#include "synchronized_value/small_atomic_strategy.h"
 
 namespace htls {
 namespace synchronized_value_internal {
@@ -103,21 +104,25 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceSingleThread) {
 }
 
 TYPED_TEST_P(SynchronizedValueTest, DefaultConstructible) {
-  constexpr auto hello = "Hello world";
+  if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
+    constexpr auto hello = "Hello world";
 
-  struct constructable {
-    std::string str;
-    constructable() : str{hello} {}
-  };
+    struct constructable {
+      std::string str;
+      constructable() : str{hello} {}
+    };
 
-  SynchronizedValue<constructable, TypeParam> sv;
-  sv.Read([&](const constructable& c) { EXPECT_EQ(c.str, hello); });
+    SynchronizedValue<constructable, TypeParam> sv;
+    sv.Read([&](const constructable& c) { EXPECT_EQ(c.str, hello); });
+  }
 }
 
 TYPED_TEST_P(SynchronizedValueTest, GetViewSingleThread) {
-  SynchronizedValue<std::vector<int>, TypeParam> vec{
-      std::initializer_list<int>{1, 2, 3, 4}};
-  EXPECT_EQ(vec.GetView()->size(), 4);
+  if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
+    SynchronizedValue<std::vector<int>, TypeParam> vec{
+        std::initializer_list<int>{1, 2, 3, 4}};
+    EXPECT_EQ(vec.GetView()->size(), 4);
+  }
 
   SynchronizedValue<int, TypeParam> num{4};
   EXPECT_EQ(*num.GetView(), 4);
@@ -136,10 +141,12 @@ TYPED_TEST_P(SynchronizedValueTest, MoveonlyUpdateInplace) {
   };
 
   if constexpr (SynchronizedValue<moveonly, TypeParam>::kInplaceUpdatable) {
-    SynchronizedValue<moveonly, TypeParam> sv{5};
-    sv.Read([&](const moveonly& m) { EXPECT_EQ(m.value, 5); });
-    sv.UpdateInplace([](moveonly& m) { ++m.value; });
-    sv.Read([&](const moveonly& m) { EXPECT_EQ(m.value, 6); });
+    if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
+      SynchronizedValue<moveonly, TypeParam> sv{5};
+      sv.Read([&](const moveonly& m) { EXPECT_EQ(m.value, 5); });
+      sv.UpdateInplace([](moveonly& m) { ++m.value; });
+      sv.Read([&](const moveonly& m) { EXPECT_EQ(m.value, 6); });
+    }
   }
 }
 
@@ -238,11 +245,15 @@ void test_update_map_multithread() {
 }
 
 TYPED_TEST_P(SynchronizedValueTest, MapUpdateInplaceMulti) {
-  test_update_map_multithread<TypeParam, true>();
+  if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
+    test_update_map_multithread<TypeParam, true>();
+  }
 }
 
 TYPED_TEST_P(SynchronizedValueTest, MapUpdateCopyMulti) {
-  test_update_map_multithread<TypeParam, false>();
+  if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
+    test_update_map_multithread<TypeParam, false>();
+  }
 }
 
 REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest, NonMovableAndCopyable,
@@ -253,7 +264,7 @@ REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest, NonMovableAndCopyable,
                             MapUpdateInplaceMulti, MapUpdateCopyMulti);
 
 using strategies = ::testing::Types<AbslMutexStrategy, LeftRightStrategy,
-                                    SharedPtrRcuStrategy>;
+                                    SharedPtrRcuStrategy, SmallAtomicStrategy>;
 INSTANTIATE_TYPED_TEST_SUITE_P(SVTests, SynchronizedValueTest, strategies);
 
 }  // namespace

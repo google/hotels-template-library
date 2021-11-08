@@ -21,7 +21,7 @@
 #include <type_traits>
 #include <utility>
 
-#include "third_party/absl/synchronization/mutex.h"
+#include <absl/synchronization/mutex.h>
 
 namespace htls {
 namespace synchronized_value_internal {
@@ -34,9 +34,9 @@ struct is_inplace_updatable<
     Strategy, T,
     std::void_t<decltype(Strategy::UpdateInplace(
         std::declval<absl::Mutex&>(),
-        std::declval<typename Strategy::template value_type<T>&>(),
+        std::declval<typename Strategy::template ValueType<T>&>(),
         std::declval<std::function<void(
-            typename Strategy::template value_type<T>&)>>()))>>
+            typename Strategy::template ValueType<T>&)>>()))>>
     : std::true_type {};
 
 template <class Strategy, class T>
@@ -51,9 +51,9 @@ struct is_copy_updatable<
     Strategy, T,
     std::void_t<decltype(Strategy::UpdateCopy(
         std::declval<absl::Mutex&>(),
-        std::declval<typename Strategy::template value_type<T>&>(),
-        std::declval<std::function<typename Strategy::template value_type<T>(
-            const typename Strategy::template value_type<T>&)>>()))>>
+        std::declval<typename Strategy::template ValueType<T>&>(),
+        std::declval<std::function<typename Strategy::template ValueType<T>(
+            const typename Strategy::template ValueType<T>&)>>()))>>
     : std::true_type {};
 
 template <class Strategy, class T>
@@ -138,12 +138,10 @@ class MovableLock {
 using MovableReaderLock = MovableLock<MovableLockType::kReader>;
 using MovableWriterLock = MovableLock<MovableLockType::kWriter>;
 
-
 template <typename T, typename LockStrategy>
 class SynchronizedValue {
  public:
   using ViewType = typename LockStrategy::template ViewType<T>;
-  using value_type = T;
   using ValueType = T;
 
   static constexpr bool kInplaceUpdatable =
@@ -175,7 +173,7 @@ class SynchronizedValue {
   template <typename Predicate>
   ViewType GetViewWhen(const Predicate& predicate) const {
     return LockStrategy::template MakeView<T>(mutex_, value_, [&]() {
-      return predicate(LockStrategy::GetUnsafeValue(value_));
+      return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
     });
   }
 
@@ -199,9 +197,9 @@ class SynchronizedValue {
   void UpdateCopy(Updater&& updater) {
     static_assert(
         std::is_convertible_v<Updater&&,
-                              std::function<value_type(const value_type&)>>,
+                              std::function<ValueType(const ValueType&)>>,
         "Invalid func signature: updater must be of signature (const "
-        "value_type&) -> value_type");
+        "ValueType&) -> ValueType");
     if constexpr (kCopyUpdatable) {
       absl::WriterMutexLock lock(&mutex_);
       LockStrategy::UpdateCopy(mutex_, value_, std::forward<Updater>(updater));
@@ -216,12 +214,12 @@ class SynchronizedValue {
   void UpdateCopyWhen(Updater&& updater, const Predicate& predicate) {
     static_assert(
         std::is_convertible_v<Updater&&,
-                              std::function<value_type(const value_type&)>>,
+                              std::function<ValueType(const ValueType&)>>,
         "Invalid func signature: updater must be of signature (const "
-        "value_type&) -> value_type");
+        "ValueType&) -> ValueType");
     if constexpr (kCopyUpdatable) {
       MovableWriterLock lock(mutex_, [&]() {
-        return predicate(LockStrategy::GetUnsafeValue(value_));
+        return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });
       LockStrategy::UpdateCopy(mutex_, value_, std::forward<Updater>(updater));
     } else {
@@ -234,8 +232,8 @@ class SynchronizedValue {
   template <typename Updater>
   void UpdateInplace(Updater&& updater) {
     static_assert(
-        std::is_convertible_v<Updater&&, std::function<void(value_type&)>>,
-        "Invalid func signature: updater must be of signature (value_type&) -> "
+        std::is_convertible_v<Updater&&, std::function<void(ValueType&)>>,
+        "Invalid func signature: updater must be of signature (ValueType&) -> "
         "void");
     if constexpr (kInplaceUpdatable) {
       absl::WriterMutexLock lock(&mutex_);
@@ -255,12 +253,12 @@ class SynchronizedValue {
   template <typename Updater, typename Predicate>
   void UpdateInplaceWhen(Updater&& updater, const Predicate& predicate) {
     static_assert(
-        std::is_convertible_v<Updater&&, std::function<void(value_type&)>>,
-        "Invalid func signature: updater must be of signature (value_type&) -> "
+        std::is_convertible_v<Updater&&, std::function<void(ValueType&)>>,
+        "Invalid func signature: updater must be of signature (ValueType&) -> "
         "void");
     if constexpr (kInplaceUpdatable) {
       MovableWriterLock lock(mutex_, [&]() {
-        return predicate(LockStrategy::GetUnsafeValue(value_));
+        return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });
       LockStrategy::UpdateInplace(mutex_, value_,
                                   std::forward<Updater>(updater));
@@ -277,7 +275,7 @@ class SynchronizedValue {
 
  private:
   mutable absl::Mutex mutex_;
-  typename LockStrategy::template value_type<T> value_;
+  typename LockStrategy::template ValueType<T> value_;
 };
 
 }  // namespace htls
