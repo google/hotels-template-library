@@ -16,6 +16,7 @@
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_HAVERSACK_IMPL_H_
 
 #include <cassert>
+#include <cstddef>
 #include <iostream>
 #include <memory>
 #include <tuple>
@@ -162,7 +163,7 @@ constexpr bool IsKnownThreadSafe(types::Type<WrappedType> t) {
 }
 template <typename CtorArg>
 constexpr auto GetDisplayableCtorArgType(types::Type<CtorArg> t) {
-  if constexpr (t == types::type_c<nullptr_t>) {
+  if constexpr (t == types::type_c<std::nullptr_t>) {
     return types::type_c<void>;
   } else if constexpr (IsTagged(t)) {
     return t;
@@ -790,7 +791,7 @@ template <typename T, typename Tag>
 auto CoerceCtorArg(Tagged<T, Tag> tagged) {
   return tagged;
 }
-inline nullptr_t CoerceCtorArg(nullptr_t) { return nullptr; }
+inline std::nullptr_t CoerceCtorArg(std::nullptr_t) { return nullptr; }
 
 template <typename T>
 using CoercedCtorArg = decltype(CoerceCtorArg(std::declval<T&&>()));
