@@ -151,7 +151,7 @@ class Haversack {
                       internal::MakeBasicTuple(
                           internal::types::type_c<
                               internal::CoercedCtorArg<UncoercedCtorArgs>>...)),
-                  std::move(cxt).members_,
+                  *std::move(cxt).members_,
                   internal::CoerceCtorArg(std::move(args))...) {}
 
   // This ctor is only selected if the arguments are (incorrectly) not pointers.
@@ -200,7 +200,7 @@ class Haversack {
     return OtherHaversack(CtorSentinel(),
                           OtherHaversack::Traits().CtorCompatibility(
                               Traits().all_deps, internal::BasicTuple<>()),
-                          std::move(members_));
+                          *std::move(members_));
   }
   template <
       typename OtherHaversack,
@@ -225,7 +225,7 @@ class Haversack {
       typename = std::enable_if_t<GetSharedHelper::GetMatchingWrappedType() !=
                                   internal::types::type_c<void>>>
   [[nodiscard]] decltype(auto) GetShared() const {
-    return GetSharedHelper::Get(members_);
+    return GetSharedHelper::Get(*members_);
   }
 
   // Gets a reference to the T member.
@@ -324,7 +324,7 @@ class Haversack {
         ExplicitWrappedType>;
     static_assert(
         Contains(internal::types::type_c<TypeToReplace>, Traits().all_deps));
-    std::get<internal::Holder<TypeToReplace>>(members_).value =
+    std::get<internal::Holder<TypeToReplace>>(*members_).value =
         internal::CoerceCtorArg(std::move(arg));
     return std::move(*this);
   }
@@ -340,9 +340,10 @@ class Haversack {
             typename PropagatedTuple>
   explicit Haversack(CtorSentinel, Compatibility compatibility,
                      PropagatedTuple pt, AddedCtorArgs... added)
-      : members_(internal::CatAndSortTuples(Traits().MemberTupleType(),
-                                            compatibility, std::move(pt),
-                                            std::move(added)...)) {
+      : members_(std::make_shared<typename decltype(members_)::element_type>(
+            internal::CatAndSortTuples(Traits().MemberTupleType(),
+                                       compatibility, std::move(pt),
+                                       std::move(added)...))) {
     auto checks = Traits().AssertIsValidHaversack(compatibility);
     RunChecks(checks);
   }
@@ -388,7 +389,7 @@ class Haversack {
                     internal::types::type_c<ExplicitWrappedTypes>...),
             internal::BasicTuple<>()),
         std::tuple_cat(
-            std::move(members_),
+            std::move(*members_),
             std::make_tuple(
                 internal::ConvertOne<ExplicitWrappedTypes>()(args)...)));
   }
@@ -399,7 +400,7 @@ class Haversack {
   friend constexpr auto internal::TraitsOf(internal::types::Type<T>);
   friend internal::HaversackTestUtil;
 
-  typename decltype(Traits().MemberTupleType())::type members_;
+  std::shared_ptr<typename decltype(Traits().MemberTupleType())::type> members_;
 };
 
 // Calls is used to indicate to the Haversack any relevant functions that are

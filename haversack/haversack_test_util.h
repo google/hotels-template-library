@@ -59,12 +59,12 @@ struct HaversackTestUtil {
         // Capture by pointer because Apply does not support mutable invocables.
         [result_ptr = &result,
          direct_ptr = &direct_deps_haversack](auto... types) {
-          ((get<typename decltype(types)::type>(result_ptr->members_) =
-                std::move(
-                    get<typename decltype(types)::type>(direct_ptr->members_))),
+          ((get<typename decltype(types)::type>(*result_ptr->members_) =
+                std::move(get<typename decltype(types)::type>(
+                    *direct_ptr->members_))),
            ...);
         },
-        types::AsTuple(types::Type(direct_deps_haversack.members_)));
+        types::AsTuple(types::Type(*direct_deps_haversack.members_)));
     return result;
   }
 };
