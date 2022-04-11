@@ -24,6 +24,9 @@
 #include <absl/synchronization/mutex.h>
 
 namespace htls {
+
+enum class ShouldLockWrites : bool { kLockWrites, kLocklessWrites };
+
 namespace synchronized_value_internal {
 
 template <class, class, class = std::void_t<>>
@@ -60,26 +63,39 @@ template <class Strategy, class T>
 inline constexpr bool is_copy_updatable_v =
     is_copy_updatable<Strategy, T>::value;
 
+template <class Strategy, class = void>
+struct should_lock_writes : std::true_type {};
+template <class Strategy>
+struct should_lock_writes<Strategy,
+                          std::void_t<decltype(Strategy::kShouldLockWrites)>> {
+  static constexpr bool value =
+      Strategy::kShouldLockWrites == htls::ShouldLockWrites::kLockWrites;
+};
+template <class Strategy>
+inline constexpr bool should_lock_writes_v =
+    should_lock_writes<Strategy>::value;
+
 }  // namespace synchronized_value_internal
 
 // Defines a movable lock.
 
-enum class MovableLockType { kLock, kReader, kWriter };
+enum class MovableLockType { kLock, kReader, kWriter, kNoLock };
 
 template <MovableLockType LockType>
 class MovableLock {
  public:
   explicit MovableLock(absl::Mutex& mutex) : mutex_(&mutex) {
-    switch (LockType) {
-      case MovableLockType::kLock:
-        mutex_->Lock();
-        break;
-      case MovableLockType::kReader:
-        mutex_->ReaderLock();
-        break;
-      case MovableLockType::kWriter:
-        mutex_->WriterLock();
-        break;
+    if constexpr (LockType == MovableLockType::kLock) {
+      mutex_->Lock();
+    } else if constexpr (LockType == MovableLockType::kReader) {
+      mutex_->ReaderLock();
+    } else if constexpr (LockType == MovableLockType::kWriter) {
+      mutex_->WriterLock();
+    } else {
+      // This static_assert is the same condition as the above if condition so
+      // if we reach this block, the static_assert will fail.
+      static_assert(LockType == MovableLockType::kLock,
+                    "Should be exhaustive if-else chain.");
     }
   }
 
@@ -89,50 +105,56 @@ class MovableLock {
   MovableLock(absl::Mutex& mutex, const Predicate& predicate) : mutex_(&mutex) {
     absl::Condition condition(
         +[](const Predicate* predicate) { return (*predicate)(); }, &predicate);
-    switch (LockType) {
-      case MovableLockType::kLock:
-        mutex_->LockWhen(condition);
-        break;
-      case MovableLockType::kReader:
-        mutex_->ReaderLockWhen(condition);
-        break;
-      case MovableLockType::kWriter:
-        mutex_->WriterLockWhen(condition);
-        break;
+    if constexpr (LockType == MovableLockType::kLock) {
+      mutex_->LockWhen(condition);
+    } else if constexpr (LockType == MovableLockType::kReader) {
+      mutex_->ReaderLockWhen(condition);
+    } else if constexpr (LockType == MovableLockType::kWriter) {
+      mutex_->WriterLockWhen(condition);
+    } else {
+      // This static_assert is the same condition as the above if condition so
+      // if we reach this block, the static_assert will fail.
+      static_assert(LockType == MovableLockType::kLock,
+                    "Should be exhaustive if-else chain.");
     }
   }
 
-  MovableLock() : mutex_(nullptr) {}
+  MovableLock() = default;
 
   MovableLock(const MovableLock&) = delete;
   MovableLock& operator=(const MovableLock&) = delete;
 
-  MovableLock(MovableLock&& other) : mutex_(other.mutex_) {
-    other.mutex_ = nullptr;
-  }
+  MovableLock(MovableLock&& other)
+      : mutex_(std::exchange(other.mutex_, nullptr)) {}
   MovableLock& operator=(MovableLock&& other) {
-    mutex_ = other.mutex_;
-    other.mutex_ = nullptr;
+    mutex_ = std::exchange(other.mutex_, nullptr);
     return *this;
   }
 
   ~MovableLock() {
     if (!mutex_) return;
-    switch (LockType) {
-      case MovableLockType::kLock:
-        mutex_->Unlock();
-        break;
-      case MovableLockType::kReader:
-        mutex_->ReaderUnlock();
-        break;
-      case MovableLockType::kWriter:
-        mutex_->WriterUnlock();
-        break;
+    if constexpr (LockType == MovableLockType::kLock) {
+      mutex_->Unlock();
+    } else if constexpr (LockType == MovableLockType::kReader) {
+      mutex_->ReaderUnlock();
+    } else if constexpr (LockType == MovableLockType::kWriter) {
+      mutex_->WriterUnlock();
+    } else {
+      // This static_assert is the same condition as the above if condition so
+      // if we reach this block, the static_assert will fail.
+      static_assert(LockType == MovableLockType::kLock,
+                    "Should be exhaustive if-else chain.");
     }
   }
 
  private:
-  absl::Mutex* mutex_;
+  absl::Mutex* mutex_ = nullptr;
+};
+template <>
+class MovableLock<MovableLockType::kNoLock> {
+ public:
+  template <typename... Args>
+  MovableLock(Args&&...) {}
 };
 
 using MovableReaderLock = MovableLock<MovableLockType::kReader>;
@@ -140,6 +162,10 @@ using MovableWriterLock = MovableLock<MovableLockType::kWriter>;
 
 template <typename T, typename LockStrategy>
 class SynchronizedValue {
+  using WriterLockT = std::conditional_t<
+      synchronized_value_internal::should_lock_writes_v<LockStrategy>,
+      MovableWriterLock, MovableLock<MovableLockType::kNoLock>>;
+
  public:
   using ViewType = typename LockStrategy::template ViewType<T>;
   using ValueType = T;
@@ -201,7 +227,7 @@ class SynchronizedValue {
         "Invalid func signature: updater must be of signature (const "
         "ValueType&) -> ValueType");
     if constexpr (kCopyUpdatable) {
-      absl::WriterMutexLock lock(&mutex_);
+      WriterLockT lock(mutex_);
       LockStrategy::UpdateCopy(mutex_, value_, std::forward<Updater>(updater));
     } else {
       UpdateInplace([&updater](T& value) { value = updater(value); });
@@ -218,7 +244,7 @@ class SynchronizedValue {
         "Invalid func signature: updater must be of signature (const "
         "ValueType&) -> ValueType");
     if constexpr (kCopyUpdatable) {
-      MovableWriterLock lock(mutex_, [&]() {
+      WriterLockT lock(mutex_, [&]() {
         return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });
       LockStrategy::UpdateCopy(mutex_, value_, std::forward<Updater>(updater));
@@ -236,7 +262,7 @@ class SynchronizedValue {
         "Invalid func signature: updater must be of signature (ValueType&) -> "
         "void");
     if constexpr (kInplaceUpdatable) {
-      absl::WriterMutexLock lock(&mutex_);
+      WriterLockT lock(mutex_);
       LockStrategy::UpdateInplace(mutex_, value_,
                                   std::forward<Updater>(updater));
     } else {
@@ -257,7 +283,7 @@ class SynchronizedValue {
         "Invalid func signature: updater must be of signature (ValueType&) -> "
         "void");
     if constexpr (kInplaceUpdatable) {
-      MovableWriterLock lock(mutex_, [&]() {
+      WriterLockT lock(mutex_, [&]() {
         return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });
       LockStrategy::UpdateInplace(mutex_, value_,
