@@ -222,10 +222,11 @@ class SynchronizedValue {
   template <typename Updater>
   void UpdateCopy(Updater&& updater) {
     static_assert(
-        std::is_convertible_v<Updater&&,
-                              std::function<ValueType(const ValueType&)>>,
-        "Invalid func signature: updater must be of signature (const "
-        "ValueType&) -> ValueType");
+        std::is_constructible_v<
+            typename LockStrategy::template ValueType<T>,
+            std::invoke_result_t<Updater,const ValueType&>>,
+        "Invalid updater. Updater must take a const reference of ValueType and "
+        "return a value that can be converted to ValueType");
     if constexpr (kCopyUpdatable) {
       WriterLockT lock(mutex_);
       LockStrategy::UpdateCopy(mutex_, value_, std::forward<Updater>(updater));
@@ -239,11 +240,12 @@ class SynchronizedValue {
   template <typename Updater, typename Predicate>
   void UpdateCopyWhen(Updater&& updater, const Predicate& predicate) {
     static_assert(
-        std::is_convertible_v<Updater&&,
-                              std::function<ValueType(const ValueType&)>>,
-        "Invalid func signature: updater must be of signature (const "
-        "ValueType&) -> ValueType");
-    if constexpr (kCopyUpdatable) {
+        std::is_constructible_v<
+            typename LockStrategy::template ValueType<T>,
+            std::invoke_result_t<Updater,const ValueType&>>,
+        "Invalid updater. Updater must take a const reference of ValueType and "
+        "return a value that can be converted to ValueType");
+   if constexpr (kCopyUpdatable) {
       WriterLockT lock(mutex_, [&]() {
         return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });
