@@ -86,7 +86,6 @@
 #include "haversack/internal/haversack_impl.h"
 #include "haversack/internal/type.h"
 #include "haversack/internal/type_set.h"
-#include "haversack/internal/util.h"
 
 namespace hotels::haversack {
 
@@ -212,7 +211,7 @@ class Haversack {
               .CtorCompatibility(Traits().all_deps, internal::BasicTuple<>())
               .IsCompatible()>>
   operator OtherHaversack() const& {  // NOLINT
-    auto self = *this;
+    Haversack self = *this;
     return static_cast<OtherHaversack>(std::move(self));
   }
 
@@ -251,7 +250,7 @@ class Haversack {
   // Prefer to use the Haversack ctor if the final Haversack type is known.
   template <typename... WrappedTypes>
   [[nodiscard]] auto Without() && {
-    constexpr auto removes =
+    constexpr internal::types::TypeSet removes =
         MakeTypeSet(internal::types::type_c<WrappedTypes>...);
     static_assert(sizeof...(WrappedTypes) > 0,
                   "Must specify at least one type to remove.");
@@ -265,7 +264,7 @@ class Haversack {
   }
   template <typename... WrappedTypes>
   [[nodiscard]] auto Without() const& {
-    auto self = *this;  // Make a copy of this.
+    Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Without<WrappedTypes...>();
   }
 
@@ -291,7 +290,7 @@ class Haversack {
             typename = std::enable_if_t<sizeof...(ExplicitWrappedTypes) ==
                                         sizeof...(UncoercedCtorArgs)>>
   [[nodiscard]] auto Insert(UncoercedCtorArgs... args) const& {
-    auto self = *this;  // Make a copy of this.
+    Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Insert<ExplicitWrappedTypes...>(
         std::move(args)...);
   }
@@ -302,7 +301,7 @@ class Haversack {
   }
   template <typename... UncoercedCtorArgs>
   [[nodiscard]] auto Insert(UncoercedCtorArgs... args) const& {
-    auto self = *this;  // Make a copy of this.
+    Haversack self = *this;  // Make a copy of this.
     return std::move(self).Insert(std::move(args)...);
   }
 
@@ -330,7 +329,7 @@ class Haversack {
   }
   template <typename ExplicitWrappedType = void, typename UncoercedCtorArg>
   [[nodiscard]] Haversack Replace(UncoercedCtorArg arg) const& {
-    auto self = *this;  // Make a copy of this.
+    Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Replace<ExplicitWrappedType>(
         std::move(arg));
   }
@@ -344,7 +343,8 @@ class Haversack {
             internal::CatAndSortTuples(Traits().MemberTupleType(),
                                        compatibility, std::move(pt),
                                        std::move(added)...))) {
-    auto checks = Traits().AssertIsValidHaversack(compatibility);
+    auto checks =
+        Traits().AssertIsValidHaversack(compatibility);
     RunChecks(checks);
   }
 
@@ -352,7 +352,8 @@ class Haversack {
   // Assert that all WrappedTypes can be added to this haversack.
   template <typename... WrappedTypes>
   static constexpr void AssertAdds() {
-    constexpr auto adds = MakeTypeSet(internal::types::type_c<WrappedTypes>...);
+    constexpr auto adds =
+        MakeTypeSet(internal::types::type_c<WrappedTypes>...);
     static_assert(sizeof...(WrappedTypes) > 0, "Must add at least one type.");
     static_assert(size((adds & Traits().all_deps).Tuple()) == 0,
                   "All the added types must not be in the haversack already.");
@@ -572,8 +573,9 @@ struct Tagged {
 };
 template <typename Tag, typename UncoercedCtorArg>
 auto MakeTagged(UncoercedCtorArg arg) {
-  constexpr auto element_type = internal::DeduceWrappedTypeFromCtorArg(
-      internal::types::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
+  constexpr internal::types::Type element_type =
+      internal::DeduceWrappedTypeFromCtorArg(
+          internal::types::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
   return Tagged<typename decltype(element_type)::type, Tag>{
       .tagged = internal::CoerceCtorArg(arg)};
 }

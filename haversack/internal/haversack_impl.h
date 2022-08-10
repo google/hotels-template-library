@@ -132,8 +132,8 @@ class UnwrapTypeWrappersFunctor {
  public:
   template <typename WrappedType>
   constexpr auto operator()(types::Type<WrappedType> t) const {
-    constexpr auto pair = Impl(types::type_c<WrappedType>);
-    constexpr auto metadata = pair.second;
+    constexpr std::pair pair = Impl(types::type_c<WrappedType>);
+    constexpr WrappedTypeMetadata metadata = pair.second;
     static_assert(metadata.order != WrappingMetadataOrder::kOutOfOrder,
                   "See internal::WrappingMetadataOrder for more information "
                   "about type wrapping order.");
@@ -276,7 +276,7 @@ constexpr auto FindMatchesImpl(types::Type<SourceCtorArg> source_ctor_arg) {
           constexpr auto shared_proxy_of = [](auto t) {
             return types::FromTuple<SharedProxy>(MakeBasicTuple(t));
           };
-          constexpr auto target_shared_proxy =
+          constexpr types::Type target_shared_proxy =
               shared_proxy_of(kUnwrapTypeWrappers(wrapped_target));
           return is_convertible(source_ctor_arg, target_shared_proxy);
         }
@@ -284,21 +284,22 @@ constexpr auto FindMatchesImpl(types::Type<SourceCtorArg> source_ctor_arg) {
       TargetWrappedTypes());
 }
 template <typename TargetWrappedTypes, typename SourceCtorArg>
-constexpr auto kFindMatches =
+constexpr BasicTuple kFindMatches =
     FindMatchesImpl<TargetWrappedTypes>(types::type_c<SourceCtorArg>);
 
 // kGetMatchChecks is a constexpr memoization cache for GetMatchChecksImpl to
 // avoid maximum step limit compilation errors.
 template <typename CompatibleArgsInstance>
 constexpr auto GetMatchChecksImpl() {
-  auto all_source_matches = CompatibleArgsInstance::FindAllSourceMatches();
-  auto source_checks = Transform(
+  BasicTuple all_source_matches =
+      CompatibleArgsInstance::FindAllSourceMatches();
+  BasicTuple source_checks = Transform(
       [=](auto t) {
         return types::FromTuple<SourceMatches>(
             MakeBasicTuple(GetDisplayableCtorArgType(get<0>(t))) + get<1>(t));
       },
       all_source_matches);
-  auto target_checks = Transform(
+  BasicTuple target_checks = Transform(
       [=](auto t) {
         return types::FromTuple<TargetMatches>(
             MakeBasicTuple(t) +
@@ -310,7 +311,8 @@ constexpr auto GetMatchChecksImpl() {
   return source_checks + target_checks;
 }
 template <typename CompatibleArgsInstance>
-constexpr auto kGetMatchChecks = GetMatchChecksImpl<CompatibleArgsInstance>();
+constexpr BasicTuple kGetMatchChecks =
+    GetMatchChecksImpl<CompatibleArgsInstance>();
 
 // ConvertOne<TargetWrappedType> has an operator() to convert any valid CtorArg
 // to a Holder<TargetWrappedType>.
@@ -333,7 +335,7 @@ struct ConvertOne {
   template <typename U, typename = std::enable_if_t<!std::is_same_v<
                             decltype(Impl(std::declval<U&&>())), void>>>
   constexpr Holder<TargetWrappedType> operator()(U u) const {
-    auto holder = Impl(std::move(u));
+    Holder holder = Impl(std::move(u));
     if constexpr (!IsNullable(types::type_c<TargetWrappedType>)) {
       if (!holder.value) {
         std::cerr
@@ -373,7 +375,7 @@ class CompatibleArgs {
   // or more than one thing, returns Type<void> instead.
   template <typename SourceCtorArg>
   static constexpr auto FindMatch(types::Type<SourceCtorArg> source) {
-    auto matches = FindMatches(source);
+    BasicTuple matches = FindMatches(source);
     if constexpr (size(matches) == 1) {
       return get<0>(matches);
     } else {
@@ -544,7 +546,7 @@ constexpr auto GetTypesFromCalls(types::Type<CallsInstance>) {
   auto get_arguments_that_are_haversacks = [](auto t) {
     using FuncT = std::remove_const_t<
         std::remove_reference_t<typename decltype(t)::type>>;
-    auto args =
+    BasicTuple args =
         types::AsTuple(types::type_c<typename function_traits<FuncT>::args>);
     return Filter([](auto arg) { return IsHaversack(arg); },
                   Transform(types::MetaTypeFunction<std::decay>(), args));
@@ -656,13 +658,13 @@ struct HaversackTraitsBuilder {
 
   constexpr auto Build() const {
     constexpr HaversackTraitsBuilder self;
-    constexpr auto make_type_set = [](auto... ts) {
-      return types::MakeTypeSet(ts...);
+    constexpr auto make_type_set = [](auto types) {
+      return Apply([](auto... ts) { return types::MakeTypeSet(ts...); }, types);
     };
-    constexpr auto direct_dep_set = Apply(make_type_set, self.direct);
-    constexpr auto dep_set =
-        direct_dep_set | Apply(make_type_set, self.indirect);
-    constexpr auto provide_set = Apply(make_type_set, self.provides);
+    constexpr types::TypeSet direct_dep_set = make_type_set(self.direct);
+    constexpr types::TypeSet dep_set =
+        direct_dep_set | make_type_set(self.indirect);
+    constexpr types::TypeSet provide_set = make_type_set(self.provides);
 
     constexpr bool no_direct_deps_are_provided =
         size((direct_dep_set & provide_set).Tuple()) == 0;
@@ -679,10 +681,10 @@ struct HaversackTraitsBuilder {
         "\"provided\" dependencies.");
     static_assert(all_direct_deps_unique,
                   "Each direct dependency should be unique.");
-    constexpr auto tags = Filter(
+    constexpr BasicTuple tags = Filter(
         [](auto t) { return t != types::type_c<void>; },
         Transform([](auto t) { return GetTag(t); }, direct_dep_set.Tuple()));
-    constexpr auto tags_set = Apply(make_type_set, tags);
+    constexpr types::TypeSet tags_set = make_type_set(tags);
     constexpr bool all_tags_unique = size(tags) == size(tags_set.Tuple());
     static_assert(all_tags_unique,
                   "A Haversack cannot have multiple direct dependencies with "
@@ -809,7 +811,7 @@ inline constexpr bool kIsValidCtorArg = types::IsValidExpr(
 // This is a constexpr template constant to effectively memoize this operation
 // at compile time.
 template <typename... Ts>
-constexpr auto kHaversackTraits =
+constexpr HaversackTraits kHaversackTraits =
     Accumulate(internal::AccumulateHaversackTraits(),
                internal::MakeBasicTuple(internal::types::type_c<Ts>...),
                internal::EmptyHaversackTraitsBuilder())
@@ -843,14 +845,14 @@ struct GetSharedHelper {
                            TraitsOf(types::type_c<HaversackT>).direct)) {
       return types::type_c<T>;
     } else {
-      constexpr auto matching_tags = Filter(
+      constexpr BasicTuple matching_tags = Filter(
           [](auto t_arg) {
-            constexpr auto t = t_arg;
+            constexpr types::Type t = t_arg;
             return GetTag(t) == types::type_c<T>;
           },
           TraitsOf(types::type_c<HaversackT>).direct.Tuple());
       if constexpr (size(matching_tags) == 1) {
-        auto real_type = get<0>(matching_tags);
+        types::Type real_type = get<0>(matching_tags);
         return real_type;
       }
     }

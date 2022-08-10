@@ -82,7 +82,7 @@ struct TypeInfo {
 
   // std::swap is not constexpr until C++20...
   constexpr void swap(TypeInfo& other) {
-    auto self = *this;
+    TypeInfo self = *this;
     *this = other;
     other = self;
   }
@@ -160,9 +160,9 @@ constexpr std::array<std::size_t, N> MakeReverse(
 }
 
 template <typename... Ts>
-constexpr auto kSortedTypeInfos = TypeInfo::MakeSortedArray<Ts...>();
+constexpr std::array kSortedTypeInfos = TypeInfo::MakeSortedArray<Ts...>();
 template <typename... Ts>
-constexpr auto kReverseIndexes = MakeReverse(kSortedTypeInfos<Ts...>);
+constexpr std::array kReverseIndexes = MakeReverse(kSortedTypeInfos<Ts...>);
 
 template <typename... Ts>
 struct SortedTypeInfoCollection {
@@ -186,8 +186,8 @@ struct SortedTypeInfoCollection {
             std::ptrdiff_t offset_delta>
   constexpr bool IndexIsUniqueImpl() const {
     constexpr BasicTuple<Type<Ts>...> tuple;
-    constexpr auto rev = kReverseIndexes<Ts...>[index];
-    constexpr auto compare_index = rev + compare_offset;
+    constexpr std::size_t rev = kReverseIndexes<Ts...>[index];
+    constexpr std::size_t compare_index = rev + compare_offset;
     if constexpr (compare_index < 0 || compare_index >= size(tuple)) {
       // There is nothing left to check against so this index must be unique.
       return true;
@@ -222,7 +222,7 @@ constexpr auto MakeTypeSetImpl(std::index_sequence<indexes...>,
   auto transform = [&](auto t, auto index_constant) {
     // Note: function arguments are not constexpr so we encode the index in the
     // type and extract it into a constexpr variable here.
-    constexpr auto index = decltype(index_constant)::value;
+    constexpr std::size_t index = decltype(index_constant)::value;
     // Predicate: Include t if it is exactly the first time it appears in infos,
     // otherwise exclude it.
     if constexpr (type_infos.template IndexIsUniqueSoFar<index>()) {
@@ -243,7 +243,7 @@ constexpr auto DifferenceImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
                               Type<Ts>... ts) {
   constexpr SortedTypeInfoCollection<Ts..., Us...> type_infos;
   auto transform = [&](auto t, auto index_constant) {
-    constexpr auto index = decltype(index_constant)::value;
+    constexpr std::size_t index = decltype(index_constant)::value;
     // Predicate: Include t if it only appears once in infos otherwise exclude
     // it.
     if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
@@ -267,7 +267,7 @@ constexpr auto IntersectionImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
                                 Type<Ts>... ts) {
   constexpr SortedTypeInfoCollection<Ts..., Us...> type_infos;
   auto transform = [&](auto t, auto index_constant) {
-    constexpr auto index = decltype(index_constant)::value;
+    constexpr std::size_t index = decltype(index_constant)::value;
     // Predicate: Include t if t is NOT unique in infos, otherwise exclude it.
     if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
       return MakeBasicTuple();
