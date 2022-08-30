@@ -51,10 +51,10 @@ TypeSet(internal_type_set::TypeSetCtorSentinel, BasicTuple<Type<Ts>...>)
 namespace internal_type_set {
 
 // Basic constexpr c-string hashing function.
-template <typename T>
+template <typename... Ts>
 constexpr uint64_t FnvHash64() {
   // __PRETTY_FUNCTION__ is a c-string that contains a string representation of
-  // T, so we use __PRETTY_FUNCTION__ as the basis of the hash.
+  // Ts, so we use __PRETTY_FUNCTION__ as the basis of the hash.
   const char* str = __PRETTY_FUNCTION__;
   constexpr uint64_t kFnvPrime = 0x00000100000001B3;
   constexpr uint64_t kFnvOffsetBias = 0xcbf29ce484222325;
@@ -64,8 +64,8 @@ constexpr uint64_t FnvHash64() {
   }
   return hash;
 }
-template <typename T>
-constexpr uint64_t kTypeHash = FnvHash64<T>();
+template <typename... Ts>
+constexpr uint64_t kTypeHash = FnvHash64<Ts...>();
 
 // An object holding some metadata about a type to enable comparisons of types.
 // The type order is derived from the hash of the type, therefore:

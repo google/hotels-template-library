@@ -99,11 +99,14 @@ class Haversack {
   // Internal ctor sentinal type.
   using CtorSentinel = internal::CtorSentinel;
 
- public:
   // Get the traits for this Haversack.
   static constexpr auto Traits() {
-    return internal::kHaversackTraits<ImplTs...>;
+    return internal::TraitsOf(internal::types::type_c<Haversack>);
   }
+  // Eagerly initialize Traits() for each haversack at compile-time and verify
+  // there were no issues.
+  static_assert(!std::is_same_v<decltype(Traits()), void>,
+                "There was an issue building the haversack traits.");
 
  public:
   // Public alias for the Haversack type.
