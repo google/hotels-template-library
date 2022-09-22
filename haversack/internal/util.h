@@ -183,6 +183,39 @@ template <typename T>
 inline constexpr std::string_view debug_type_name_v =
     internal_meta_util::GetDebugTypeName<T>();
 
+namespace internal_assert_is {
+
+enum class Placeholder : int;
+
+template <std::size_t N, std::size_t M, typename Compare,
+          typename... ContextPtrs>
+constexpr void assert_is_impl(Compare cmp, ContextPtrs*...) {
+  static_assert(cmp(N, M));
+}
+
+template <std::size_t N, std::size_t M, typename Context,
+          typename... ContextRest, typename Compare, typename... ContextPtrs>
+constexpr void assert_is_helper(Compare cmp, ContextPtrs*... context_ptrs) {
+  if constexpr (sizeof...(ContextRest) == 0) {
+    assert_is_impl<N, M>(cmp, context_ptrs..., static_cast<Context*>(nullptr),
+                         static_cast<Placeholder*>(nullptr));
+  } else {
+    assert_is_helper<N, M, ContextRest...>(cmp, context_ptrs...,
+                                           static_cast<Context*>(nullptr),
+                                           static_cast<Placeholder*>(nullptr));
+  }
+}
+
+}  // namespace internal_assert_is
+
+// Perform a static_assert on N and M using cmp. The list of Context types will
+// be interleaved with Placeholder for easy parsing.
+template <std::size_t N, std::size_t M, typename... Context, typename Compare>
+constexpr void assert_is(Compare cmp) {
+  internal_assert_is::assert_is_helper<N, M, Context...>(
+      cmp, static_cast<internal_assert_is::Placeholder*>(nullptr));
+}
+
 }  // namespace hotels::haversack::internal
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_UTIL_H_

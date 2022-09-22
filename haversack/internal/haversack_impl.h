@@ -15,6 +15,32 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_HAVERSACK_IMPL_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_HAVERSACK_IMPL_H_
 
+// HAVERSACK_GET_TESTER_MODE is used to determine what kind of special behavior
+// to apply to detect unused Haversack direct dependencies.
+//
+// HAVERSACK_GET_TESTER_MODE == 0
+//   Normal behavior mode.
+// HAVERSACK_GET_TESTER_MODE == 1
+//   Identify all direct dependencies mode. When this mode is used, a
+//   static_assert failure will be emitted for every combination of instantiated
+//   haversacks and their direct dependencies. The compiler failure traceback
+//   will include a hash for every direct dependency that is unique to that
+//   Haversack and dependency combination.
+// HAVERSACK_GET_TESTER_MODE > 1
+//   Test if a specific dependency is actually used. HAVERSACK_GET_TESTER_MODE
+//   should be set to one of the hashes from "HAVERSACK_GET_TESTER_MODE == 1"
+//   mode. If the dependency is accessed (e.g. by calling Get) from the
+//   haversack type associated with that hash then a static_assert failure is
+//   emitted. By building the relevant code that uses this haversack,
+//   compilation will fail if the dependency is used and succeed if the
+//   dependency is unused!
+#ifndef HAVERSACK_GET_TESTER_MODE
+// If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
+// again at the end of this file.
+#define HAVERSACK_GET_TESTER_MODE 0
+#define UNSET_HAVERSACK_GET_TESTER_MODE
+#endif
+
 #include <cassert>
 #include <cstddef>
 #include <iostream>
@@ -185,6 +211,8 @@ constexpr auto DeduceWrappedTypeFromCtorArg(types::Type<CtorArg> t) {
 // invariants are enforced during Haversack construction in production.
 template <typename WrappedType>
 struct Holder {
+  using type = WrappedType;
+
   SharedProxy<typename decltype(kUnwrapTypeWrappers(
       types::type_c<WrappedType>))::type>
       value;
@@ -197,10 +225,10 @@ struct HaversackTestUtil;
 struct CtorSentinel {};
 
 // Access the private traits of the Haversack.
+template <typename... Ts>
+constexpr auto TraitsOf(types::Type<Haversack<Ts...>>);
 template <typename HaversackT>
-constexpr auto TraitsOf(types::Type<HaversackT> t) {
-  return HaversackT::Traits();
-}
+constexpr auto TraitsOf(types::Type<HaversackT> t);
 
 template <typename SourceDisplayableCtorArg, typename... TargetWrappedTypes>
 struct SourceMatches {
@@ -326,11 +354,12 @@ struct ConvertOne {
     if constexpr (is_template_instance_v<U, std::shared_ptr> &&
                   std::is_convertible_v<U, SharedProxy<TargetUnwrappedType>>) {
       return Holder<TargetWrappedType>{std::move(u)};
-    } else if constexpr (IsTagged(types::type_c<TargetWrappedType>))
+    } else if constexpr (IsTagged(types::type_c<TargetWrappedType>)) {
       if constexpr (GetTag(types::type_c<U>) ==
                     GetTag(types::type_c<TargetWrappedType>)) {
         return Holder<TargetWrappedType>{std::move(u.tagged)};
       }
+    }
   }
   template <typename U, typename = std::enable_if_t<!std::is_same_v<
                             decltype(Impl(std::declval<U&&>())), void>>>
@@ -584,6 +613,7 @@ template <typename DirectDepsT, typename AllDepsT, typename BuilderSuccessT>
 struct HaversackTraits {
   DirectDepsT direct;
   AllDepsT all_deps;
+  using BuilderSuccessType = BuilderSuccessT;
 
   template <typename Compatibility>
   constexpr auto AssertIsValidHaversack(Compatibility compatibility) const {
@@ -817,6 +847,35 @@ constexpr HaversackTraits kHaversackTraits =
                internal::EmptyHaversackTraitsBuilder())
         .Build();
 
+// Access the private traits of the Haversack.
+//
+// This should be eagerly instantiated for each haversack instance to ensure
+// that all static_assert failures are emitted for
+// "HAVERSACK_GET_TESTER_MODE == 1".
+template <typename... Ts>
+constexpr auto TraitsOf(types::Type<Haversack<Ts...>>) {
+#if HAVERSACK_GET_TESTER_MODE == 1
+  // Emit a static_assert failure for each direct dependency in the haversack.
+  internal::Transform(
+      [](auto t) {
+        using T = typename decltype(t)::type;
+        assert_is<types::internal_type_set::FnvHash64<Haversack<Ts...>, T>(), 0,
+                  Haversack<Ts...>, T>(std::equal_to<>{});
+        return nullptr;
+      },
+      internal::kHaversackTraits<Ts...>.direct.Tuple());
+#endif
+  return internal::kHaversackTraits<Ts...>;
+}
+// Overload to dispatch to the actual Haversack<...> type instead of the
+// subtype.
+template <typename HaversackT>
+constexpr auto TraitsOf(types::Type<HaversackT> t) {
+  if constexpr (t != types::type_c<typename HaversackT::HaversackT>) {
+    return TraitsOf(types::type_c<typename HaversackT::HaversackT>);
+  }
+}
+
 // T can be a WrappedType or a Tag.
 template <typename T, typename HaversackT>
 struct GetSharedHelper {
@@ -824,6 +883,18 @@ struct GetSharedHelper {
                                                 .MemberTupleType())::type;
   static const auto& Get(const MemberTupleType& members) {
     using HolderT = Holder<typename decltype(GetMatchingWrappedType())::type>;
+#if HAVERSACK_GET_TESTER_MODE > 1
+    // Assert iff the hash provided to HAVERSACK_GET_TESTER_MODE matches the
+    // hash of this HaversackT and wrapped type being gotten.
+    //
+    // If this assert triggers, then the dependency associated with this hash is
+    // USED, and if this assert never triggers for a hash then that dependency
+    // is UNUSED.
+    assert_is<HAVERSACK_GET_TESTER_MODE,
+              types::internal_type_set::FnvHash64<HaversackT,
+                                                  typename HolderT::type>(),
+              HaversackT, typename HolderT::type>(std::not_equal_to<>{});
+#endif
     const auto& value = std::get<HolderT>(members).value;
     // Non-nullness invariant is enforced by the ctor in production, so this
     // assert exists to prevent segfaults in tests.
@@ -861,5 +932,10 @@ struct GetSharedHelper {
 
 }  // namespace internal
 }  // namespace hotels::haversack
+
+#ifdef UNSET_HAVERSACK_GET_TESTER_MODE
+#undef HAVERSACK_GET_TESTER_MODE
+#undef UNSET_HAVERSACK_GET_TESTER_MODE
+#endif
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_HAVERSACK_IMPL_H_

@@ -20,6 +20,13 @@
 #include "haversack/haversack.h"
 #include "haversack/internal/basic_tuple.h"
 
+#ifndef HAVERSACK_GET_TESTER_MODE
+// If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
+// again at the end of this file.
+#define HAVERSACK_GET_TESTER_MODE 0
+#define UNSET_HAVERSACK_GET_TESTER_MODE
+#endif
+
 namespace hotels::haversack {
 namespace internal {
 
@@ -35,6 +42,16 @@ struct HaversackTestUtil {
                 sizeof...(HaversackTs) != 0 &&
                 (... && internal::IsHaversack(types::type_c<HaversackTs>))>>
   static auto MakeFakeHaversack(Args&&... args) {
+#if HAVERSACK_GET_TESTER_MODE == 1
+    // If HAVERSACK_GET_TESTER_MODE is on mode 1, create a haversack that is all
+    // nullptrs since we don't want to define the intermediate Haversack type
+    // with direct dependencies since those direct dependencies would cause
+    // hashes to be asserted on.
+    using ResultT = Haversack<Deps<HaversackTs>...>;
+    return ResultT(internal::CtorSentinel(), FakeCompatibility(),
+                   typename decltype(TraitsOf(types::type_c<ResultT>)
+                                         .MemberTupleType())::type());
+#else
     // Haversack containing only the direct dependencies to HaversackT.
     constexpr auto direct_type_set =
         (... | TraitsOf(types::type_c<HaversackTs>).direct);
@@ -66,6 +83,7 @@ struct HaversackTestUtil {
         },
         types::AsTuple(types::Type(*direct_deps_haversack.members_)));
     return result;
+#endif
   }
 };
 
@@ -91,5 +109,10 @@ auto MakeFakeHaversack(Args&&... args) {
 }
 
 }  // namespace hotels::haversack
+
+#ifdef UNSET_HAVERSACK_GET_TESTER_MODE
+#undef HAVERSACK_GET_TESTER_MODE
+#undef UNSET_HAVERSACK_GET_TESTER_MODE
+#endif
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_UTIL_H_
