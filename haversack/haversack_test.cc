@@ -14,6 +14,7 @@
 
 #include "haversack/haversack.h"
 
+#include <memory>
 #include <type_traits>
 
 #include <gmock/gmock.h>
@@ -290,21 +291,21 @@ TEST_F(CtorAndAccessTest, FHSackFromBHSack) {
 }
 
 TEST_F(CtorAndAccessTest, GHSackFromHander) {
-  GHSack cxt(handler_cxt_, absl::make_unique<G>(100));
+  GHSack cxt(handler_cxt_, std::make_unique<G>(100));
   EXPECT_THAT(cxt.Get<G>().i, 100);
   EXPECT_THAT(cxt.Get<L>().i, 7);
 }
 
 TEST_F(CtorAndAccessTest, GHSackFromCHSack) {
   CHSack c_cxt = handler_cxt_;
-  GHSack cxt(c_cxt, absl::make_unique<G>(100));
+  GHSack cxt(c_cxt, std::make_unique<G>(100));
   EXPECT_THAT(cxt.Get<G>().i, 100);
   EXPECT_THAT(cxt.Get<L>().i, 7);
 }
 
 TEST_F(CtorAndAccessTest, GHSackFromFHSack) {
   FHSack f_cxt = handler_cxt_;
-  GHSack cxt(f_cxt, absl::make_unique<G>(100));
+  GHSack cxt(f_cxt, std::make_unique<G>(100));
   EXPECT_THAT(cxt.Get<G>().i, 100);
   EXPECT_THAT(cxt.Get<L>().i, 7);
 }
@@ -407,9 +408,9 @@ TEST_F(HaversackTest, RawHaversackToChild) {
 }
 
 TEST_F(HaversackTest, HaversackFromNothing) {
-  AHSack cxt(absl::make_unique<A>(100), absl::make_unique<L>(101),
-             absl::make_unique<D>(102), absl::make_unique<M>(103),
-             absl::make_unique<E>(104), absl::make_unique<N>(105));
+  AHSack cxt(std::make_unique<A>(100), std::make_unique<L>(101),
+             std::make_unique<D>(102), std::make_unique<M>(103),
+             std::make_unique<E>(104), std::make_unique<N>(105));
   EXPECT_THAT(cxt.Get<A>().i, 100);
   EXPECT_THAT(cxt.Get<L>().i, 101);
 }
@@ -420,7 +421,7 @@ TEST_F(HaversackTest, WithoutUnneededType) {
 }
 
 TEST_F(HaversackTest, WithoutAndInsertType) {
-  AHSack cxt = handler_cxt_.Without<A>().Insert(absl::make_unique<A>(100));
+  AHSack cxt = handler_cxt_.Without<A>().Insert(std::make_unique<A>(100));
   EXPECT_EQ(cxt.Get<A>().i, 100);
 }
 
@@ -432,19 +433,19 @@ TEST_F(HaversackTest, CannotWithoutNonExistentType) {
 
 TEST_F(HaversackTest, FunctionCallsDependency) {
   using HSack = Haversack<Calls<MyFunc>>;
-  HSack cxt = HSack(absl::make_unique<C>(100), absl::make_unique<D>(101));
+  HSack cxt = HSack(std::make_unique<C>(100), std::make_unique<D>(101));
   EXPECT_EQ(MyFunc(A(1), B(2), cxt), 5);
 }
 
 TEST_F(HaversackTest, FunctionCallsDependencyTakingRef) {
   using HSack = Haversack<Calls<MyFuncTakingRef>>;
-  HSack cxt = HSack(absl::make_unique<E>(100), absl::make_unique<F>(101));
+  HSack cxt = HSack(std::make_unique<E>(100), std::make_unique<F>(101));
   EXPECT_EQ(MyFuncTakingRef(A(1), B(2), cxt), 10);
 }
 
 TEST_F(HaversackTest, FunctionCallsDependencyNonCopyable) {
   using HSack = Haversack<Calls<non_copyable_functor>>;
-  HSack cxt = HSack(absl::make_unique<A>(100), absl::make_unique<B>(101));
+  HSack cxt = HSack(std::make_unique<A>(100), std::make_unique<B>(101));
   EXPECT_EQ(non_copyable_functor(cxt), 10);
 }
 
@@ -503,7 +504,7 @@ TEST(HaversackCtor, WrongArity) {
   EXPECT_NON_COMPILE(
       "TargetMatches<hotels::haversack::\\(anonymous namespace\\)::A>.*The "
       "target type doesn\\'t have any matches",
-      Haversack<A, B>(absl::make_unique<B>(2)));
+      Haversack<A, B>(std::make_unique<B>(2)));
 }
 
 TEST(HaversackCtor, WrongArityNullable) {
@@ -511,7 +512,7 @@ TEST(HaversackCtor, WrongArityNullable) {
       "TargetMatches<hotels::haversack::Nullable<hotels::haversack::\\("
       "anonymous namespace\\)::A>>.*The "
       "target type doesn\\'t have any matches",
-      Haversack<Nullable<A>, B>(absl::make_unique<B>(2)));
+      Haversack<Nullable<A>, B>(std::make_unique<B>(2)));
 }
 
 TEST(HaversackCtor, NoArgumentMatch) {
@@ -571,7 +572,7 @@ TEST(FakeHaversack, MakeFakeHaversackPropagate) {
 }
 
 TEST(HaversackConversion, CanConvertToSubset) {
-  Haversack<A, B> sack(absl::make_unique<A>(1), absl::make_unique<B>(2));
+  Haversack<A, B> sack(std::make_unique<A>(1), std::make_unique<B>(2));
   Haversack<A> child = sack;
   EXPECT_EQ(child.Get<A>().i, 1);
   EXPECT_TRUE((std::is_convertible_v<Haversack<A, B>, Haversack<A>>));
