@@ -27,6 +27,8 @@
 #include "testing/base/public/benchmark.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
 #include <absl/types/span.h>
 
 namespace htls::range {
@@ -36,6 +38,18 @@ namespace {
 using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Field;
+using ::testing::status::IsOkAndHolds;
+using ::testing::status::StatusIs;
+
+// To aid with testing things like stopping iteration early
+// this combinator just does an identity transform and increments a counter
+
+auto Counter(int& count) {
+  return TransformEach([&count](auto&& value) mutable -> decltype(auto) {
+    ++count;
+    return std::forward<decltype(value)>(value);
+  });
+}
 
 TEST(TestOutputCombinators, NoCombinators) {
   std::vector<int> v{1, 2, 3};
@@ -73,9 +87,9 @@ TEST(TestOutputCombinators, AccumulateInPlace) {
 
 TEST(TestOutputCombinators, ToVectorAddressOf) {
   std::vector<int> v{1, 2, 3};
-  auto result = Apply(v,            //
-                      AddressOf(),  //
-                      ToVector()    //
+  auto result = Apply(v,                //
+                      AddressOfEach(),  //
+                      ToVector()        //
   );
   EXPECT_THAT(result, ElementsAre(&v[0], &v[1], &v[2]));
 }
@@ -104,7 +118,7 @@ TEST(TestOutputCombinators, TakeToVector) {
 TEST(TestOutputCombinators, TakeToRefVector) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v,          //
-                      Ref(),      //
+                      RefEach(),  //
                       Take(2),    //
                       ToVector()  //
   );
@@ -115,11 +129,11 @@ TEST(TestOutputCombinators, TakeToRefVector) {
 
 TEST(TestOutputCombinators, TakeToMoveVector) {
   std::vector<std::string> v{"Hello", "World", "John"};
-  auto result = Apply(v,          //
-                      Take(2),    //
-                      Ref(),      //
-                      Move(),     //
-                      ToVector()  //
+  auto result = Apply(v,           //
+                      Take(2),     //
+                      RefEach(),   //
+                      MoveEach(),  //
+                      ToVector()   //
   );
   static_assert(
       std::is_same_v<std::decay_t<decltype(result)>::value_type, std::string>);
@@ -129,12 +143,12 @@ TEST(TestOutputCombinators, TakeToMoveVector) {
 
 TEST(TestOutputCombinators, TakeToMoveLRefVector) {
   std::vector<std::string> v{"Hello", "World", "John"};
-  auto result = Apply(v,          //
-                      Take(2),    //
-                      Ref(),      //
-                      Move(),     //
-                      LRef(),     //
-                      ToVector()  //
+  auto result = Apply(v,           //
+                      Take(2),     //
+                      RefEach(),   //
+                      MoveEach(),  //
+                      LRefEach(),  //
+                      ToVector()   //
   );
   static_assert(
       std::is_same_v<std::decay_t<decltype(result)>::value_type, std::string>);
@@ -145,11 +159,56 @@ TEST(TestOutputCombinators, TakeToMoveLRefVector) {
 TEST(TestOutputCombinators, TransformToVector) {
   std::vector<int> v{1, 2, 3};
   auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
-  auto result = Apply(v,                     //
-                      Transform(to_double),  //
-                      ToVector()             //
+  auto result = Apply(v,                         //
+                      TransformEach(to_double),  //
+                      ToVector()                 //
   );
   EXPECT_THAT(result, ElementsAre(1.5, 2.5, 3.5));
+}
+
+TEST(TestOutputCombinators, TransformComplet) {
+  auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
+  auto result = Apply(1,                    //
+                      Transform(to_double)  //
+  );
+
+  static_assert(std::is_same_v<decltype(Apply(1,                    //
+                                              Transform(to_double)  //
+                                              )),
+                               double>);
+  EXPECT_THAT(result, 1.5);
+}
+
+TEST(TestOutputCombinators, TransformCompleteAndThen) {
+  auto to_double = [](int i) {
+    return absl::StatusOr<double>(static_cast<double>(i) + 0.5);
+  };
+  auto result = Apply(1,                     //
+                      Transform(to_double),  //
+                      AndThen()              //
+  );
+
+  static_assert(std::is_same_v<decltype(Apply(1,                     //
+                                              Transform(to_double),  //
+                                              AndThen()              //
+                                              )),
+                               absl::StatusOr<double>>);
+  EXPECT_THAT(result, IsOkAndHolds(1.5));
+}
+
+TEST(TestOutputCombinators, TransformCompleteAndThenWithError) {
+  auto to_double = [](int i) -> absl::StatusOr<double> {
+    if (i == 0) {
+      return absl::UnknownError("test");
+    }
+    return absl::StatusOr<double>(static_cast<double>(i) + 0.5);
+  };
+  auto result = Apply(0,                     //
+                      Transform(to_double),  //
+                      AndThen()              //
+  );
+
+  EXPECT_THAT(result, StatusIs(absl::StatusCode::kUnknown, "test"));
 }
 
 TEST(TestOutputCombinators, FilterToVector) {
@@ -163,10 +222,10 @@ TEST(TestOutputCombinators, FilterTransformToVector) {
   std::vector<int> v{1, 2, 3};
   auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
   auto even_numbers = [](int i) { return i % 2 == 0; };
-  auto result = Apply(v,                     //
-                      Filter(even_numbers),  //
-                      Transform(to_double),  //
-                      ToVector()             //
+  auto result = Apply(v,                         //
+                      Filter(even_numbers),      //
+                      TransformEach(to_double),  //
+                      ToVector()                 //
   );
   static_assert(
       std::is_same_v<std::decay_t<decltype(result)>, std::vector<double>>);
@@ -177,32 +236,75 @@ TEST(TestOutputCombinators, TransformFilterToVector) {
   std::vector<int> v{1, 2, 3};
   auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
   auto greater_than_2 = [](double d) { return d > 2.0; };
-  auto result = Apply(v,                       //
-                      Transform(to_double),    //
-                      Filter(greater_than_2),  //
-                      ToVector()               //
+  auto result = Apply(v,                         //
+                      TransformEach(to_double),  //
+                      Filter(greater_than_2),    //
+                      ToVector()                 //
   );
   EXPECT_THAT(result, ElementsAre(2.5, 3.5));
+}
+
+TEST(TestOutputCombinators, TransformAndThenFilterToVectorError) {
+  std::vector<int> v{1, 2, 3, 0};
+  auto to_double = [](int i) -> absl::StatusOr<double> {
+    if (i == 0) {
+      return absl::UnknownError("test");
+    }
+    return static_cast<double>(i) + 0.5;
+  };
+  auto greater_than_2 = [](double d) { return d > 2.0; };
+  auto result = Apply(v,                         //
+                      TransformEach(to_double),  //
+                      AndThenEach(),             //
+                      Filter(greater_than_2),    //
+                      ToVector()                 //
+  );
+  EXPECT_THAT(result, StatusIs(absl::StatusCode::kUnknown, "test"));
+}
+
+TEST(TestOutputCombinators, TransformAndThenFilterToVectorSuccess) {
+  std::vector<int> v{1, 2, 3, 0};
+  auto to_double = [](int i) -> absl::StatusOr<double> {
+    return static_cast<double>(i) + 0.5;
+  };
+  auto greater_than_2 = [](double d) { return d > 2.0; };
+  auto result = Apply(v,                         //
+                      TransformEach(to_double),  //
+                      AndThenEach(),             //
+                      Filter(greater_than_2),    //
+                      ToVector()                 //
+  );
+  EXPECT_THAT(result, IsOkAndHolds(ElementsAre(2.5, 3.5)));
 }
 
 TEST(TestOutputCombinators, TransformFilterTakeToVector) {
   std::vector<int> v{1, 2, 3};
   auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
   auto greater_than_2 = [](double d) { return d > 2.0; };
-  auto result = Apply(v,                       //
-                      Transform(to_double),    //
-                      Filter(greater_than_2),  //
-                      Take(1),                 //
-                      ToVector()               //
+  int counter1 = 0;
+  int counter2 = 0;
+  auto result = Apply(v,                         //
+                      Counter(counter1),         //
+                      TransformEach(to_double),  //
+                      Filter(greater_than_2),    //
+                      Counter(counter2),         //
+                      Take(1),                   //
+                      ToVector()                 //
   );
   EXPECT_THAT(result, ElementsAre(2.5));
+  // We have to iterator 2 elements because 1 gets dropped by Filter, before we
+  // can Take(1).
+  EXPECT_THAT(counter1, 2);
+  EXPECT_THAT(counter2, 1);
 }
 
 TEST(TestOutputCombinators, SortGreater) {
   std::vector<int> v{1, 2, 3};
-  auto result = Apply(v, Sort(std::greater<>()));
+  auto& result = Apply(v, Sort(std::greater<>()));
+  static_assert(std::is_same_v<decltype(Apply(v, Sort(std::greater<>()))),
+                               std::vector<int>&>);
   EXPECT_THAT(result, ElementsAre(3, 2, 1));
-  EXPECT_THAT(v, ElementsAre(1, 2, 3));
+  EXPECT_THAT(&v, &result);
 }
 
 TEST(TestOutputCombinators, Flatten) {
@@ -211,12 +313,76 @@ TEST(TestOutputCombinators, Flatten) {
   EXPECT_THAT(result,
               ElementsAre('H', 'e', 'l', 'l', 'o', 'W', 'o', 'r', 'l', 'd'));
 }
-
 TEST(TestOutputCombinators, SortUnique) {
   std::vector<int> v{3, 2, 3, 1};
-  auto result = Apply(v, Sort(), Unique());
+  auto& result = Apply(v, Sort(), Unique());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
-  EXPECT_THAT(v, ElementsAre(3, 2, 3, 1));
+  EXPECT_THAT(&v, &result);
+}
+
+// See truth table at
+// https://en.cppreference.com/w/cpp/algorithm/all_any_none_of
+
+TEST(TestOutputCombinators, AllOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, AllOf(identity)), true);
+  EXPECT_THAT(Apply(some_true, AllOf(identity)), false);
+  EXPECT_THAT(Apply(all_false, AllOf(identity)), false);
+  EXPECT_THAT(Apply(empty, AllOf(identity)), true);
+}
+
+TEST(TestOutputCombinators, AllOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), AllOf(identity));
+  EXPECT_THAT(count, 1);
+}
+TEST(TestOutputCombinators, AnyOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, AnyOf(identity)), true);
+  EXPECT_THAT(Apply(some_true, AnyOf(identity)), true);
+  EXPECT_THAT(Apply(all_false, AnyOf(identity)), false);
+  EXPECT_THAT(Apply(empty, AnyOf(identity)), false);
+}
+
+TEST(TestOutputCombinators, AnyOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), AnyOf(identity));
+  EXPECT_THAT(count, 2);
+}
+
+TEST(TestOutputCombinators, NoneOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, NoneOf(identity)), false);
+  EXPECT_THAT(Apply(some_true, NoneOf(identity)), false);
+  EXPECT_THAT(Apply(all_false, NoneOf(identity)), true);
+  EXPECT_THAT(Apply(empty, NoneOf(identity)), true);
+}
+
+TEST(TestOutputCombinators, NoneOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), NoneOf(identity));
+  EXPECT_THAT(count, 2);
 }
 
 TEST(TestOutputCombinators, SortUniqueSpan) {
@@ -273,23 +439,13 @@ class MoveTrackingVector {
 TEST(TestOutputCombinators, SortGreaterMove) {
   MoveTrackingVector<int> v{1, 2, 3};
   auto result = Apply(std::move(v), Sort(std::greater<>()));
+  static_assert(
+      std::is_same_v<decltype(Apply(std::move(v), Sort(std::greater<>()))),
+                     MoveTrackingVector<int>>);
+
   EXPECT_THAT(result, ElementsAre(3, 2, 1));
   v.reset();
   EXPECT_TRUE(v.moved());
-}
-
-TEST(TestOutputCombinators, SortGreaterRef) {
-  std::vector<int> v{1, 2, 3};
-  auto result = Apply(std::ref(v), Sort(std::greater<>()));
-  EXPECT_THAT(&result.get(), &v);
-  EXPECT_THAT(v, ElementsAre(3, 2, 1));
-}
-
-TEST(TestOutputCombinators, SortUniqueRef) {
-  std::vector<int> v{3, 2, 3, 1};
-  auto result = Apply(std::ref(v), Sort(), Unique());
-  EXPECT_THAT(&result.get(), &v);
-  EXPECT_THAT(v, ElementsAre(1, 2, 3));
 }
 
 TEST(TestOutputCombinators, SortGreaterToVector) {
@@ -305,11 +461,11 @@ TEST(TestOutputCombinators, SortGreaterToVector) {
 TEST(TestOutputCombinators, TransformedSortGreaterToVector) {
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
-  auto result = Apply(v,                            //
-                      Transform(subtract_from_10),  //
-                      ToVector(),                   // s
-                      Sort(std::greater<>()),       //
-                      ToVector()                    //
+  auto result = Apply(v,                                //
+                      TransformEach(subtract_from_10),  //
+                      ToVector(),                       // s
+                      Sort(std::greater<>()),           //
+                      ToVector()                        //
 
   );
 
@@ -319,12 +475,12 @@ TEST(TestOutputCombinators, TransformedSortGreaterFilterToVector) {
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                            //
-                      Transform(subtract_from_10),  //
-                      ToVector(),                   //
-                      Sort(std::greater<>()),       //
-                      Filter(odd_numbers),          //
-                      ToVector()                    //
+  auto result = Apply(v,                                //
+                      TransformEach(subtract_from_10),  //
+                      ToVector(),                       //
+                      Sort(std::greater<>()),           //
+                      Filter(odd_numbers),              //
+                      ToVector()                        //
 
   );
   EXPECT_THAT(result, ElementsAre(9, 7));
@@ -334,13 +490,13 @@ TEST(TestOutputCombinators, TransformedSortGreaterTakeFilterToVector) {
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                            //
-                      Transform(subtract_from_10),  //
-                      ToVector(),                   //
-                      Sort(std::greater<>()),       //
-                      Filter(odd_numbers),          //
-                      Take(2),                      //
-                      ToVector()                    //
+  auto result = Apply(v,                                //
+                      TransformEach(subtract_from_10),  //
+                      ToVector(),                       //
+                      Sort(std::greater<>()),           //
+                      Filter(odd_numbers),              //
+                      Take(2),                          //
+                      ToVector()                        //
 
   );
   EXPECT_THAT(result, ElementsAre(9, 7));
@@ -350,13 +506,13 @@ TEST(TestOutputCombinators,
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                                    //
-                      Compose(Transform(subtract_from_10),  //
-                              ToVector(),                   //
-                              Sort(std::greater<>())),      //
-                      Filter(odd_numbers),                  //
-                      Take(2),                              //
-                      ToVector()                            //
+  auto result = Apply(v,                                        //
+                      Compose(TransformEach(subtract_from_10),  //
+                              ToVector(),                       //
+                              Sort(std::greater<>())),          //
+                      Filter(odd_numbers),                      //
+                      Take(2),                                  //
+                      ToVector()                                //
   );
   EXPECT_THAT(result, ElementsAre(9, 7));
 }
@@ -366,13 +522,13 @@ TEST(TestOutputCombinators,
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                            //
-                      Transform(subtract_from_10),  //
-                      ToVector(),                   //
-                      Sort(std::greater<>()),       //
-                      Compose(Filter(odd_numbers),  //
-                              Take(2),              //
-                              ToVector())           //
+  auto result = Apply(v,                                //
+                      TransformEach(subtract_from_10),  //
+                      ToVector(),                       //
+                      Sort(std::greater<>()),           //
+                      Compose(Filter(odd_numbers),      //
+                              Take(2),                  //
+                              ToVector())               //
 
   );
   EXPECT_THAT(result, ElementsAre(9, 7));
@@ -383,15 +539,15 @@ TEST(TestOutputCombinators,
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                            //
-                      Transform(subtract_from_10),  //
-                      ToVector(),                   //
-                      Sort(std::greater<>()),       //
-                      Compose(Filter(odd_numbers),  //
-                              Take(2),              //
-                              ToVector()),          //
-                      Take(1),                      //
-                      ToVector()                    //
+  auto result = Apply(v,                                //
+                      TransformEach(subtract_from_10),  //
+                      ToVector(),                       //
+                      Sort(std::greater<>()),           //
+                      Compose(Filter(odd_numbers),      //
+                              Take(2),                  //
+                              ToVector()),              //
+                      Take(1),                          //
+                      ToVector()                        //
 
   );
   EXPECT_THAT(result, ElementsAre(9));
@@ -402,23 +558,23 @@ TEST(TestOutputCombinators,
   std::vector<int> v{1, 2, 3};
   auto subtract_from_10 = [](int i) { return 10 - i; };
   auto odd_numbers = [](int i) { return i % 2 == 1; };
-  auto result = Apply(v,                                    //
-                      Compose(Transform(subtract_from_10),  //
-                              ToVector(),                   //
-                              Sort(std::greater<>())),      //
-                      Compose(Filter(odd_numbers),          //
-                              Take(2),                      //
-                              ToVector())                   //
+  auto result = Apply(v,                                        //
+                      Compose(TransformEach(subtract_from_10),  //
+                              ToVector(),                       //
+                              Sort(std::greater<>())),          //
+                      Compose(Filter(odd_numbers),              //
+                              Take(2),                          //
+                              ToVector())                       //
   );
   EXPECT_THAT(result, ElementsAre(9, 7));
 }
 
 auto TransformVectorSort() {
   auto subtract_from_10 = [](int i) { return 10 - i; };
-  return Compose(                   //
-      Transform(subtract_from_10),  //
-      ToVector(),                   //
-      Sort(std::greater<>())        //
+  return Compose(                       //
+      TransformEach(subtract_from_10),  //
+      ToVector(),                       //
+      Sort(std::greater<>())            //
   );
 }
 
@@ -441,9 +597,9 @@ struct StructWithInt {
 
 TEST(TestOutputCombinators, TransformMemberPointer) {
   std::vector<StructWithInt> v{{1}, {2}, {3}};
-  auto result = Apply(v,                             //
-                      Transform(&StructWithInt::i),  //
-                      ToVector()                     //
+  auto result = Apply(v,                                 //
+                      TransformEach(&StructWithInt::i),  //
+                      ToVector()                         //
   );
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
 }
@@ -481,10 +637,10 @@ TEST(TestOutputCombinators, ImmovableType) {
   list.emplace_back(3);
 
   auto evens = [](auto& i) { return i.value % 2 == 0; };
-  auto result = Apply(list,                             //
-                      Filter(evens),                    //
-                      Transform(&ImmovableInt::value),  //
-                      ToVector()                        //
+  auto result = Apply(list,                                 //
+                      Filter(evens),                        //
+                      TransformEach(&ImmovableInt::value),  //
+                      ToVector()                            //
   );
 
   EXPECT_THAT(result, ElementsAre(2));
@@ -498,13 +654,13 @@ TEST(TestOutputCombinators, ImmovableTypeSortRef) {
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
   auto greater = [](auto& a, auto& b) { return a.value > b.value; };
-  auto result = Apply(list,                             //
-                      Filter(odds),                     //
-                      Ref(),                            //
-                      ToVector(),                       //
-                      Sort(greater),                    //
-                      Transform(&ImmovableInt::value),  //
-                      ToVector()                        //
+  auto result = Apply(list,                                 //
+                      Filter(odds),                         //
+                      RefEach(),                            //
+                      ToVector(),                           //
+                      Sort(greater),                        //
+                      TransformEach(&ImmovableInt::value),  //
+                      ToVector()                            //
   );
 
   EXPECT_THAT(result, ElementsAre(3, 1));
@@ -517,10 +673,10 @@ TEST(TestOutputCombinators, MoveOnlyType) {
   v.emplace_back(3);
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
-  auto result = Apply(v,                               //
-                      Filter(odds),                    //
-                      Transform(&MoveOnlyInt::value),  //
-                      ToVector()                       //
+  auto result = Apply(v,                                   //
+                      Filter(odds),                        //
+                      TransformEach(&MoveOnlyInt::value),  //
+                      ToVector()                           //
   );
 
   EXPECT_THAT(result, ElementsAre(1, 3));
@@ -531,11 +687,11 @@ TEST(TestOutputCombinators, MoveOnlyTypeTransform) {
   auto to_move_only = [](int i) { return MoveOnlyInt{i}; };
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
-  auto result = Apply(v,                               //
-                      Transform(to_move_only),         //
-                      Filter(odds),                    //
-                      Transform(&MoveOnlyInt::value),  //
-                      ToVector()                       //
+  auto result = Apply(v,                                   //
+                      TransformEach(to_move_only),         //
+                      Filter(odds),                        //
+                      TransformEach(&MoveOnlyInt::value),  //
+                      ToVector()                           //
   );
 
   EXPECT_THAT(result, ElementsAre(1, 3));
@@ -549,14 +705,103 @@ TEST(TestOutputCombinators, MoveOnlyTypeSort) {
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
   auto greater = [](auto& a, auto& b) { return a.value > b.value; };
-  auto result = Apply(std::move(v),                    //
-                      Sort(greater),                   //
-                      Filter(odds),                    //
-                      Transform(&MoveOnlyInt::value),  //
-                      ToVector()                       //
+  auto result = Apply(std::move(v),                        //
+                      Sort(greater),                       //
+                      Filter(odds),                        //
+                      TransformEach(&MoveOnlyInt::value),  //
+                      ToVector()                           //
   );
 
   EXPECT_THAT(result, ElementsAre(3, 1));
+}
+
+// Original example from go/monadic-statusor
+//
+// absl::StatusOr<ExpenseReport> ItemizeExpenses(const Image& receipt) {
+//   return StraightenAndUncrease(receipt)
+//       .and_then([](Image img) { return CropToExpenseItems(img); })
+//       .and_then([](Image img) { return SplitItems(img); })
+//       .and_then([](std::vector<Image> items) {
+//         return ParseDescriptionsAndCost(items);
+//       })
+//       .transform([](std::vector<ReceiptItem> parsed_items) {
+//         return ExpensesToUsd(parsed_items);
+//       })
+//       .transform([](std::vector<ReceiptItem> expenses) {
+//         return BuildExpenseReport(expenses);
+//       });
+// }
+
+// This would be the equivalent code with this library
+// Empty type and function implementations to verify type check works
+struct Image {};
+struct ReceiptItem {};
+struct ExpenseReport {};
+struct ExpenseReportBuilder {
+  void Add(ReceiptItem item) {}
+  ExpenseReport Build() && { return ExpenseReport{}; }
+};
+
+absl::StatusOr<Image> StraightenAndUncrease(const Image& image) {
+  return {image};
+}
+
+absl::StatusOr<Image> CropToExpenseItems(Image image) {
+  return absl::StatusOr<Image>(image);
+}
+
+absl::StatusOr<std::vector<Image>> SplitItems(Image) {
+  return absl::StatusOr<std::vector<Image>>();
+}
+
+absl::StatusOr<ReceiptItem> ParseDescriptionAndCost(const Image&) {
+  return absl::StatusOr<ReceiptItem>();
+}
+
+ReceiptItem ExpenseToUsd(const ReceiptItem& receipt) { return receipt; }
+
+absl::StatusOr<ExpenseReport> ItemizeExpenses(const Image& receipt) {
+  return Apply(                                //
+      receipt,                                 //
+      Transform(StraightenAndUncrease),        //
+      AndThen(),                               //
+      Transform(CropToExpenseItems),           //
+      AndThen(),                               //
+      Transform(SplitItems),                   //
+      AndThen(),                               //
+      TransformEach(ParseDescriptionAndCost),  //
+      AndThenEach(),                           //
+      TransformEach(ExpenseToUsd),             //
+      AccumulateInPlace(ExpenseReportBuilder(),
+                        [](ExpenseReportBuilder& builder,
+                           const ReceiptItem& item) { builder.Add(item); }  //
+                        ),                                                  //
+      Transform([](ExpenseReportBuilder&& builder) {
+        return std::move(builder).Build();
+      })  //
+  );
+}
+
+TEST(TestOutputCombinators, MonadChainExample) {
+  absl::StatusOr<ExpenseReport> expense_report = ItemizeExpenses(Image{});
+  (void)expense_report;
+
+  /*
+    absl::StatusOr<ExpenseReport> ItemizeExpenses(const Image& receipt) {
+      return StraightenAndUncrease(receipt)
+          .and_then([](Image img) { return CropToExpenseItems(img); })
+          .and_then([](Image img) { return SplitItems(img); })
+          .and_then([](std::vector<Image> items) {
+            return ParseDescriptionsAndCost(items);
+          })
+          .transform([](std::vector<ReceiptItem> parsed_items) {
+            return ExpensesToUsd(parsed_items);
+          })
+          .transform([](std::vector<ReceiptItem> expenses) {
+            return BuildExpenseReport(expenses);
+          });
+    }
+    */
 }
 
 TEST(TestOutputCombinators, MoveOnlyTypeRefSortMove) {
@@ -569,10 +814,10 @@ TEST(TestOutputCombinators, MoveOnlyTypeRefSortMove) {
   auto greater = [](auto& a, auto& b) { return a.value > b.value; };
   auto result = Apply(v,              //
                       Filter(odds),   //
-                      Ref(),          //
+                      RefEach(),      //
                       ToVector(),     //
                       Sort(greater),  //
-                      Move(),         //
+                      MoveEach(),     //
                       ToVector()      //
   );
   EXPECT_THAT(result, ElementsAre(Field(&MoveOnlyInt::value, 3),
