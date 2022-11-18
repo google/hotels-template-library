@@ -323,7 +323,7 @@ class CombinatorWrapper {
     return static_cast<Chain&>(*this);
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetChain()const {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetChain() const {
     return static_cast<const Chain&>(*this);
   }
 
@@ -671,12 +671,13 @@ struct MutateRangeImpl {
 
 template <typename InputType>
 struct FlattenImpl {
-  using OutputType = typename InputType::value_type;
+  using OutputType = decltype(*std::begin(std::declval<InputType>()));
 
-  template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
-    for (InputType input : t) {
-      next.ProcessIncremental(static_cast<InputType>(input));
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&& next) {
+    for (OutputType element : input) {
+      next.ProcessIncremental(static_cast<OutputType>(element));
     }
   }
 };

@@ -205,6 +205,13 @@ TEST(TestOutputCombinators, SortGreater) {
   EXPECT_THAT(v, ElementsAre(1, 2, 3));
 }
 
+TEST(TestOutputCombinators, Flatten) {
+  std::vector<std::string> v{"Hello", "World"};
+  auto result = Apply(v, Flatten(), ToVector());
+  EXPECT_THAT(result,
+              ElementsAre('H', 'e', 'l', 'l', 'o', 'W', 'o', 'r', 'l', 'd'));
+}
+
 TEST(TestOutputCombinators, SortUnique) {
   std::vector<int> v{3, 2, 3, 1};
   auto result = Apply(v, Sort(), Unique());
