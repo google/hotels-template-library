@@ -20,6 +20,7 @@
 #include <functional>
 #include <iterator>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -199,8 +200,10 @@ using TypeIdentityT = typename std::decay_t<T>::type;
 //     });
 //  }
 template <ProcessingStyle input_processing_style,
-          ProcessingStyle output_processing_style, typename CombinatorCreator>
-auto MakeCombinatorCreator(CombinatorCreator&& combinator_creator);
+          ProcessingStyle output_processing_style,
+          template <typename...> typename Combinator, typename... Parameters,
+          typename... Ts>
+auto MakeCombinator(Ts&&... ts);
 
 // Implementation details below:
 
@@ -711,16 +714,18 @@ struct EnumerateImpl {
   }
 };
 
-template <typename Accumulated, typename F>
+template <typename InputType, typename Accumulated, typename F>
 struct AccumulateInPlaceImpl {
   using OutputType = Accumulated;
 
   Accumulated accumulated;
   F f;
 
-  template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&&) {
-    f(UnwrapReference(accumulated), UnwrapReference(std::forward<T>(t)));
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&&) {
+    f(UnwrapReference(accumulated),
+      UnwrapReference(static_cast<InputType>(input)));
   }
 
   template <typename Next>
@@ -777,101 +782,98 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE auto Compose(FirstCombinator&& first,
 }
 
 template <ProcessingStyle input_processing_style,
-          ProcessingStyle output_processing_style, typename CombinatorCreator>
-auto MakeCombinatorCreator(CombinatorCreator&& combinator_creator) {
+          ProcessingStyle output_processing_style,
+          template <typename...> typename Combinator,
+          typename... CombinatorParameters, typename... Ts>
+auto MakeCombinator(Ts&&... ts) {
+  auto creator =
+      [tuple = std::make_tuple(std::forward<Ts>(ts)...)](auto type) mutable {
+        return std::apply(
+            [](auto&&... ts) {
+              return Combinator<TypeIdentityT<decltype(type)>,
+                                CombinatorParameters...>{
+                  std::forward<decltype(ts)>(ts)...};
+            },
+            std::move(tuple));
+      };
   return internal_htls_range::CombinatorCreatorWrapper<
       input_processing_style, output_processing_style,
-      std::decay_t<CombinatorCreator>>{
-      std::forward<CombinatorCreator>(combinator_creator)};
+      std::decay_t<decltype(creator)>>{creator};
 }
 
 inline auto ToVector() {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kComplete>([](auto type) {
-    return internal_htls_range::ToVectorImpl<TypeIdentityT<decltype(type)>>{};
-  });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kComplete,
+                               internal_htls_range::ToVectorImpl>();
 }
 
 template <typename Predicate>
 auto Filter(Predicate predicate) {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>(
-      [predicate = std::move(predicate)](auto type) {
-        return internal_htls_range::FilterImpl<typename decltype(type)::type,
-                                               Predicate>{
-            {std::move(predicate)}};
-      });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental,
+                               internal_htls_range::FilterImpl, Predicate>(
+      std::move(predicate));
 }
 
 template <typename F>
 auto Transform(F f) {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>(
-      [f = std::move(f)](auto type) mutable {
-        return internal_htls_range::TransformImpl<TypeIdentityT<decltype(type)>,
-                                                  F>{std::move(f)};
-      });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental,
+                               internal_htls_range::TransformImpl, F>(
+      std::move(f));
 }
 
 template <typename Comparator>
 auto Sort(Comparator comparator) {
-  return MakeCombinatorCreator<ProcessingStyle::kComplete,
-                               ProcessingStyle::kComplete>(
-      [comparator = std::move(comparator)](auto type) mutable {
-        auto sort = [comparator = std::move(comparator)](auto& range) {
-          auto unwrapped_comparator = [&](auto& a, auto& b) {
-            return comparator(UnwrapReference(a), UnwrapReference(b));
-          };
-          std::sort(range.begin(), range.end(), unwrapped_comparator);
-        };
-        return internal_htls_range::MutateRangeImpl<
-            TypeIdentityT<decltype(type)>, decltype(sort)>{std::move(sort)};
-      });
+  auto sort = [comparator = std::move(comparator)](auto& range) {
+    auto unwrapped_comparator = [&](auto& a, auto& b) {
+      return comparator(UnwrapReference(a), UnwrapReference(b));
+    };
+    std::sort(range.begin(), range.end(), unwrapped_comparator);
+  };
+
+  return MakeCombinator<
+      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+      internal_htls_range::MutateRangeImpl, decltype(sort)>(std::move(sort));
 }
 
 template <typename Equality>
 auto Unique(Equality equality) {
-  return MakeCombinatorCreator<ProcessingStyle::kComplete,
-                               ProcessingStyle::kComplete>(
-      [equality = std::move(equality)](auto type) mutable {
-        auto unique = [equality = std::move(equality)](auto& range) {
-          auto unwrapped_equality = [&](auto& a, auto& b) {
-            return equality(UnwrapReference(a), UnwrapReference(b));
-          };
-          auto last =
-              std::unique(range.begin(), range.end(), unwrapped_equality);
-          if constexpr (decltype(internal_htls_range::HasRemoveSuffix(
-                            range))::value) {
-            range.remove_suffix(std::distance(last, range.end()));
-          } else {
-            range.erase(last, range.end());
-          }
-        };
-        return internal_htls_range::MutateRangeImpl<
-            TypeIdentityT<decltype(type)>, decltype(unique)>{std::move(unique)};
-      });
+  auto unique = [equality = std::move(equality)](auto& range) {
+    auto unwrapped_equality = [&](auto& a, auto& b) {
+      return equality(UnwrapReference(a), UnwrapReference(b));
+    };
+    auto last = std::unique(range.begin(), range.end(), unwrapped_equality);
+    if constexpr (decltype(internal_htls_range::HasRemoveSuffix(
+                      range))::value) {
+      range.remove_suffix(std::distance(last, range.end()));
+    } else {
+      range.erase(last, range.end());
+    }
+  };
+
+  return MakeCombinator<
+      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+      internal_htls_range::MutateRangeImpl, decltype(unique)>(
+      std::move(unique));
 }
 
 inline auto Take(size_t count) {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>([count](
-                                                                  auto type) {
-    return internal_htls_range::TakeImpl<TypeIdentityT<decltype(type)>>{count};
-  });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental,
+                               internal_htls_range::TakeImpl>(count);
 }
 
 inline auto Flatten() {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>([](auto type) {
-    return internal_htls_range::FlattenImpl<TypeIdentityT<decltype(type)>>{};
-  });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental,
+                               internal_htls_range::FlattenImpl>();
 }
 
 inline auto Enumerate() {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>([](auto type) {
-    return internal_htls_range::EnumerateImpl<TypeIdentityT<decltype(type)>>{};
-  });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental,
+                               internal_htls_range::EnumerateImpl>();
 }
 inline auto Unenumerate() {
   auto un_enumerate = [](auto&& e) -> decltype(auto) {
@@ -914,12 +916,10 @@ inline auto Deref() {
 
 template <typename Accumulated, typename F>
 auto AccumulateInPlace(Accumulated accumulated, F f) {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kComplete>(
-      [accumulated = std::move(accumulated), f = std::move(f)](auto) {
-        return internal_htls_range::AccumulateInPlaceImpl<Accumulated, F>{
-            std::move(accumulated), std::move(f)};
-      });
+  return MakeCombinator<
+      ProcessingStyle::kIncremental, ProcessingStyle::kComplete,
+      internal_htls_range::AccumulateInPlaceImpl, Accumulated, F>(
+      std::move(accumulated), std::move(f));
 }
 
 template <typename Accumulated, typename F>
