@@ -26,6 +26,10 @@
 #include <vector>
 
 #include <absl/base/attributes.h>
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+
+// See go/output-combinators for the document on which this is based
 
 // Alternative solution to composing ranges
 // Based on
@@ -39,10 +43,28 @@
 // 2. Linear growth of stack-size instead of exponential
 // 3. Combinators are simpler to read and write.
 
-// This is simpler and less error-prone than websitetools::feeds::range (you
-// never need stash) and likely more performant (you are not doing begin != end
-// comparisons at every step in the chain). However, websitetools::feeds::range
-// is more flexible.
+// The most important concept to understand when using this library is that of
+// Processing Style. Processing Style refers to how a combinator processes its
+// input and output. There are two kinds of styles, complete and incremental.
+
+// Complete processing style processes a value as a whole. Think of sort. It
+// sorts the whole collection. Incremental processing style, processes the
+// elements of the value. Think of filter which filters each element
+// individually, independent of the other elements.
+
+// A combinator can have different styles for input and output. For example,
+// ToVector, takes incremental input, and outputs complete output (an entire
+// vector). Another example of this is Accumulate, which takes incremental
+// input, and outputs the accumulated value as a whole.
+
+// A combinator chain that is run, must end with a combinator that outputs a
+// complete value.
+
+// When you chain combinators, the input style of the current combinator must
+// match the output style of the previous combinator. However, the library
+// automatically will convert complete output of one combinator to incremental
+// input for the next combinator. That way you can have Filter, immediately
+// after Sort.
 
 namespace htls::range {
 
@@ -50,12 +72,12 @@ namespace htls::range {
 // Example:
 // std::vector<int> result = Apply(
 //   input_range, //
-//   Transform(&Foo::bar), //
-//   Transform([](int i){return 2 * i;}), //
+//   TransformEach(&Foo::bar), //
+//   TransformEach([](int i){return 2 * i;}), //
 //   ToVector() //
 // );
 template <typename Range, typename... Combinators>
-auto Apply(Range&& range, Combinators&&... combinators);
+decltype(auto) Apply(Range&& range, Combinators&&... combinators);
 
 // Returns a combinator composed of other combinators.
 template <typename FirstCombinator, typename... Combinators>
@@ -63,6 +85,8 @@ auto Compose(FirstCombinator&& first, Combinators&&... combinators);
 
 // Filters based on a predicate. Only outputs values for which the predicate
 // returns true.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
 // Example:
 // std::vector<int> input_range = {1, 2, 3, 4};
 // std::vector<int> result = Apply(
@@ -75,6 +99,9 @@ template <typename Predicate>
 auto Filter(Predicate predicate);
 
 // Transforms a range. It outputs the result of f.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
+// Example:
 // std::vector<int> input_range = {1, 2, 3, 4};
 // std::vector<int> result = Apply(
 //   input_range, //
@@ -86,32 +113,52 @@ auto Filter(Predicate predicate);
 // You can pass an invocable like a pointer to member
 // Transform(&MyStruct::int_member_variable)
 template <typename F>
+auto TransformEach(F f);
+
+// Transforms an entire value as a whole.
+template <typename F>
 auto Transform(F f);
 
 // Converts the output to a vector. The type of the vector is deduced.
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
 inline auto ToVector();
 
 // Sorts the output.
+// Input Processing Style: Complete
+// Output Processing Style: Complete
+// Note: Sort will sort the range in-place.
 template <typename Comparator = std::less<>>
 auto Sort(Comparator comparator = {});
 
-// Calls std::unique on the range, then removes the non-unique elements at the
-// end either via remove_suffix (supported by Span), or by erase (supported by
-// most sequence containers). Range must be sorted.
+// For sorted input, filters out the repeating elements.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
+template <typename Equality = std::equal_to<>>
+auto UniqueEach(Equality equality = {});
+
 template <typename Equality = std::equal_to<>>
 auto Unique(Equality equality = {});
 
-// Flatten range of range into a single range.
+// Flattens a range of ranges into a single range.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
 inline auto Flatten();
 
 // Takes count elements from the range.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
 inline auto Take(size_t count);
 
 // Transforms to std::reference_wrapper
-inline auto Ref();
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
+inline auto RefEach();
 
 // Transforms to r-value reference.
-inline auto Move();
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
+inline auto MoveEach();
 
 // Structure to hold enumated values
 template <typename R>
@@ -125,18 +172,44 @@ template <typename R>
 EnumeratedValue(size_t, R) -> EnumeratedValue<R>;
 
 // Enumerates values, providing an index.
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
 inline auto Enumerate();
 
 // Drops the index and returns values
+// Input Processing Style: Incremental
+// Output Processing Style: Incremental
 inline auto Unenumerate();
 
 // Calls f for each value and returns the number of times f was called.
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
 template <typename F>
 auto ForEach(F f);
 
 // Accumulates the values.
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
 template <typename Accumulated, typename F>
 auto Accumulate(Accumulated accumulated, F f);
+
+// Tests if any element fulfills a condition
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
+template <typename Predicate>
+auto AnyOf(Predicate predicate);
+
+// Tests if all the elements fulfills a condition
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
+template <typename Predicate>
+auto AllOf(Predicate predicate);
+
+// Tests if none of the elements fulfills a condition
+// Input Processing Style: Incremental
+// Output Processing Style: Complete
+template <typename Predicate>
+auto NoneOf(Predicate predicate);
 
 // The following are needed to implement combinators:
 
@@ -259,6 +332,40 @@ struct HasDone<Combinator,
 template <typename Combinator>
 static constexpr bool kHasDone = HasDone<Combinator>::value;
 
+template <typename T, typename = void>
+struct IsPointerMonad : std::false_type {};
+
+template <typename T>
+struct IsPointerMonad<T, std::void_t<decltype(std::declval<T>() == nullptr),
+                                     decltype(*std::declval<T>())>>
+    : std::true_type {};
+
+template <typename T>
+static constexpr bool kIsPointerMonad =
+    IsPointerMonad<std::remove_reference_t<T>>::value;
+
+template <typename T, typename = void>
+struct IsOptionalMonad : std::false_type {};
+
+template <typename T>
+struct IsOptionalMonad<T, std::void_t<decltype(std::declval<T>().has_value()),
+                                      decltype(*std::declval<T>())>>
+    : std::true_type {};
+
+template <typename T>
+static constexpr bool kIsOptionalMonad =
+    IsOptionalMonad<std::remove_reference_t<T>>::value;
+
+template <typename T>
+struct IsStatusOrMonad : std::false_type {};
+
+template <typename T>
+struct IsStatusOrMonad<absl::StatusOr<T>> : std::true_type {};
+
+template <typename T>
+static constexpr bool kIsStatusOrMonad =
+    IsStatusOrMonad<std::decay_t<T>>::value;
+
 template <size_t I>
 using Index = std::integral_constant<size_t, I>;
 
@@ -299,9 +406,15 @@ struct WrapperAndFinal {
   }
 
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(T&& t) {
-    wrapper.ProcessComplete(std::forward<T>(t), final);
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
+    return wrapper.ProcessComplete(std::forward<T>(t), final);
   }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End() {
+    return wrapper.End(final);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE Final& GetFinal() { return final; }
 };
 
 template <typename Wrapper, typename Final>
@@ -340,9 +453,15 @@ class CombinatorWrapper {
   }
 
   template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr void End(Final&& final) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr decltype(auto) End(Final&& final) {
+    static_assert(CombinatorCreator::kInputProcessingStyle ==
+                      ProcessingStyle::kIncremental,
+                  "End called on a complete processing "
+                  "combinator.");
     if constexpr (kHasEnd<Combinator, decltype(Next(final))>) {
-      combinator_.End(Next(final));
+      return combinator_.End(Next(final));
+    } else {
+      return Next(final).End();
     }
   }
   ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool Done() const {
@@ -378,7 +497,8 @@ class CombinatorWrapper {
   }
 
   template <typename T, typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(T&& t, Final&& final) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t,
+                                                              Final&& final) {
     constexpr bool has_process_complete =
         kHasProcessComplete<Combinator, InputType, decltype(Next(final))>;
     constexpr bool has_process_incremental =
@@ -390,7 +510,8 @@ class CombinatorWrapper {
           "Combinator with complete processing style does not implement "
           "ProcessComplete.");
       if constexpr (has_process_complete) {
-        combinator_.ProcessComplete(static_cast<InputType>(t), Next(final));
+        return combinator_.ProcessComplete(static_cast<InputType>(t),
+                                           Next(final));
       }
     } else {
       for (InputType input : t) {
@@ -405,6 +526,7 @@ class CombinatorWrapper {
                                          Next(final));
         }
       }
+      return End(final);
     }
   }
 
@@ -491,11 +613,33 @@ struct CombinatorChainImpl;
 
 // Holds the final value at the end of the chain of combinators.
 template <typename InputType>
-struct ValueHolder {
-  std::optional<std::decay_t<InputType>> value;
+struct ChainTerminator {
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE T ProcessComplete(T&& t) {
+    return std::forward<T>(t);
+  }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType t) {
-    value = static_cast<InputType>(t);
+  ABSL_ATTRIBUTE_ALWAYS_INLINE ChainTerminator& GetFinal() { return *this; }
+};
+
+// Holds the final value at the end of the chain of combinators.
+template <typename InputType>
+struct StatusChainTerminator {
+  absl::Status status = absl::OkStatus();
+  using OutputType = absl::StatusOr<std::decay_t<InputType>>;
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE OutputType ProcessComplete(T&& t) {
+    return OutputType(std::forward<T>(t));
+  }
+
+  StatusChainTerminator& GetFinal() { return *this; }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void SetError(absl::Status new_status) {
+    status = new_status;
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE OutputType GetError() {
+    return OutputType(status);
   }
 };
 
@@ -545,9 +689,9 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
             typename = std::enable_if_t<sizeof(Final) != 0 &&
                                         kInputProcessingStyle ==
                                             ProcessingStyle::kComplete>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType input,
-                                                    Final&& final) {
-    internal_htls_range::GetWrapper<0>(*this).ProcessComplete(
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+                                                              Final&& final) {
+    return internal_htls_range::GetWrapper<0>(*this).ProcessComplete(
         static_cast<InputType>(input), final);
   }
 
@@ -567,14 +711,12 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
 
   // Calls End on all the combinators.
   template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr void End(Final&& final) {
-    (internal_htls_range::GetWrapper<Is>(*this).End(final), ...);
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Final&& final) {
+    static_assert(kInputProcessingStyle == ProcessingStyle::kIncremental,
+                  "End called on complete processing combinator");
+    return internal_htls_range::GetWrapper<0>(*this).End(final);
   }
 };
-
-template <typename Chain, size_t I>
-using Combinator =
-    std::decay_t<decltype(GetWrapper<I>(std::declval<Chain&>()))>;
 
 // Alias for CombinatorChain passing the index sequence to CombinatorChainImpl.
 template <ProcessingStyle starting_input_processing_style, typename StartingT,
@@ -585,13 +727,58 @@ using CombinatorChain = CombinatorChainImpl<
     Types<starting_input_processing_style, StartingT, CombinatorCreators...>,
     CombinatorCreators...>;
 
+template <typename Chain, size_t I>
+using Combinator =
+    std::decay_t<decltype(GetWrapper<I>(std::declval<Chain&>()))>;
+
 // Wraps the combinator creator and exposes the processing styles.
 template <ProcessingStyle input_processing_style,
-          ProcessingStyle output_processing_style, typename CombinatorCreator>
+          ProcessingStyle output_processing_style, typename CombinatorCreator,
+          bool and_then = false>
 struct CombinatorCreatorWrapper : CombinatorCreator {
   static constexpr auto kInputProcessingStyle = input_processing_style;
   static constexpr auto kOutputProcessingStyle = output_processing_style;
 };
+
+template <typename T>
+struct HasAndThen;
+
+template <ProcessingStyle starting_input_processing_style, typename StartingT,
+          typename Sequence, typename Types, typename... CombinatorCreators>
+struct HasAndThen<
+    CombinatorChainImpl<starting_input_processing_style, StartingT, Sequence,
+                        Types, CombinatorCreators...>>
+    : std::integral_constant<bool,
+                             (HasAndThen<CombinatorCreators>::value || ...)> {};
+
+template <ProcessingStyle input_processing_style,
+          ProcessingStyle output_processing_style, typename CombinatorCreator,
+          bool has_and_then>
+struct HasAndThen<
+    CombinatorCreatorWrapper<input_processing_style, output_processing_style,
+                             CombinatorCreator, has_and_then>>
+    : std::integral_constant<bool, has_and_then> {};
+
+template <ProcessingStyle starting_input_processing_style,
+          typename... CombinatorCreators>
+struct ComposedCombinatorCreator : CombinatorCreators... {
+  static constexpr auto kInputProcessingStyle = starting_input_processing_style;
+  static constexpr auto kOutputProcessingStyle =
+      (CombinatorCreators::kOutputProcessingStyle, ...);
+  template <typename T>
+  auto operator()(TypeIdentity<T>) {
+    return CombinatorChain<starting_input_processing_style, T,
+                           CombinatorCreators...>{
+        std::move(static_cast<CombinatorCreators&>(*this))...};
+  }
+};
+
+template <ProcessingStyle starting_input_processing_style,
+          typename... CombinatorCreators>
+struct HasAndThen<ComposedCombinatorCreator<starting_input_processing_style,
+                                            CombinatorCreators...>>
+    : std::integral_constant<bool,
+                             (HasAndThen<CombinatorCreators>::value || ...)> {};
 
 template <typename InputType>
 struct ToVectorImpl {
@@ -606,8 +793,8 @@ struct ToVectorImpl {
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void End(Next&& next) {
-    next.ProcessComplete(std::move(vector));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(std::move(vector));
   }
 };
 
@@ -626,22 +813,8 @@ struct FilterImpl {
   }
 };
 
-template <ProcessingStyle starting_input_processing_style,
-          typename... CombinatorCreators>
-struct ComposedCombinatorCreator : CombinatorCreators... {
-  static constexpr auto kInputProcessingStyle = starting_input_processing_style;
-  static constexpr auto kOutputProcessingStyle =
-      (CombinatorCreators::kOutputProcessingStyle, ...);
-  template <typename T>
-  auto operator()(TypeIdentity<T>) {
-    return CombinatorChain<starting_input_processing_style, T,
-                           CombinatorCreators...>{
-        std::move(static_cast<CombinatorCreators&>(*this))...};
-  }
-};
-
 template <typename InputType, typename F>
-struct TransformImpl {
+struct TransformEachImpl {
   using InvokeResult =
       std::invoke_result_t<F&, decltype(UnwrapReference(
                                    std::declval<InputType>()))>;
@@ -657,18 +830,146 @@ struct TransformImpl {
   }
 };
 
-template <typename InputType, typename F>
-struct MutateRangeImpl {
-  using OutputType = std::decay_t<InputType>&&;
+template <typename T>
+decltype(auto) UnwrapMonad(T&& t) {
+  if constexpr (kIsPointerMonad<T>) {
+    return *t;
+  } else if constexpr (kIsOptionalMonad<T>) {
+    return *std::forward<T>(t);
+  } else if constexpr (kIsStatusOrMonad<T>) {
+    return *std::forward<T>(t);
+  } else {
+    static_assert(sizeof(T) == 0, "Unsupported error type.");
+  }
+}
 
-  F f;
+template <typename T>
+bool CheckMonad(T&& t) {
+  if constexpr (kIsPointerMonad<T>) {
+    return static_cast<bool>(t);
+  } else if constexpr (kIsOptionalMonad<T>) {
+    return static_cast<bool>(t);
+  } else if constexpr (kIsStatusOrMonad<T>) {
+    return t.ok();
+  } else {
+    static_assert(sizeof(T) == 0, "Unsupported error type.");
+  }
+}
+
+template <typename T>
+absl::Status MonadToStatus(T&& t) {
+  if constexpr (kIsPointerMonad<T>) {
+    return absl::InvalidArgumentError("Null pointer");
+  } else if constexpr (kIsOptionalMonad<T>) {
+    return absl::InvalidArgumentError("Empty optional");
+  } else if constexpr (kIsStatusOrMonad<T>) {
+    return t.status();
+  } else {
+    static_assert(sizeof(T) == 0, "Unsupported error type.");
+  }
+}
+
+template <typename InputType>
+struct AndThenImpl {
+  using OutputType = decltype(UnwrapMonad(std::declval<InputType>()));
+  bool has_error = false;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType input,
-                                                    Next&& next) {
-    auto range = static_cast<InputType>(input);
-    f(UnwrapReference(range));
-    next.ProcessComplete(std::move(range));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&& next) {
+    if (CheckMonad(input)) {
+      next.ProcessIncremental(UnwrapMonad(static_cast<InputType>(input)));
+    } else {
+      next.GetFinal().SetError(MonadToStatus(input));
+      has_error = true;
+    }
+  }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+                                                              Next&& next) {
+    if (CheckMonad(input)) {
+      return next.ProcessComplete(UnwrapMonad(static_cast<InputType>(input)));
+    } else {
+      next.GetFinal().SetError(MonadToStatus(input));
+      return next.GetFinal().GetError();
+    }
+  }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    if (has_error) {
+      return next.GetFinal().GetError();
+    } else {
+      return next.End();
+    }
+  }
+
+  bool Done() const { return has_error; }
+};
+
+template <typename InputType, typename F>
+struct TransformImpl {
+  using InvokeResult =
+      std::invoke_result_t<F&, decltype(std::declval<InputType>())>;
+  using OutputType =
+      decltype(std::forward<InvokeResult>(std::declval<InvokeResult>()));
+  F f;
+
+  static_assert(std::is_reference_v<OutputType>);
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+                                                              Next&& next) {
+    return next.ProcessComplete(std::invoke(f, static_cast<InputType>(input)));
+  }
+};
+template <typename InputType, typename Equal>
+struct UniqueEachImpl {
+  using OutputType = InputType;
+  Equal equal;
+  std::conditional_t<std::is_rvalue_reference_v<InputType>,
+                     std::optional<std::decay_t<InputType>>,
+                     std::remove_reference_t<InputType>*>
+      test_element;
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&& next) {
+    if constexpr (std::is_rvalue_reference_v<InputType>) {
+      const bool has_value = test_element.has_value();
+      const bool is_equal = has_value && equal(UnwrapReference(input),
+                                               UnwrapReference(*test_element));
+      if (!is_equal) {
+        if (has_value) {
+          next.ProcessIncremental(std::move(*test_element));
+        }
+        test_element = static_cast<InputType>(input);
+      }
+    } else {
+      const bool has_value = test_element;
+      const bool is_equal = has_value && equal(UnwrapReference(input),
+                                               UnwrapReference(*test_element));
+
+      if (!is_equal) {
+        if (has_value) {
+          next.ProcessIncremental(*test_element);
+        }
+        test_element = &input;
+      }
+    }
+  }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    if constexpr (std::is_rvalue_reference_v<InputType>) {
+      if (test_element.has_value()) {
+        next.ProcessIncremental(*std::move(test_element));
+      }
+    } else {
+      if (test_element) {
+        next.ProcessIncremental(*test_element);
+      }
+    }
+    return next.End();
   }
 };
 
@@ -729,8 +1030,50 @@ struct AccumulateInPlaceImpl {
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void End(Next&& next) {
-    next.ProcessComplete(std::move(accumulated));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(std::move(accumulated));
+  }
+};
+
+template <typename InputType, typename Predicate>
+struct AllOfImpl {
+  using OutputType = bool&&;
+
+  Predicate predicate;
+
+  bool all_of = true;
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&&) {
+    all_of = predicate(UnwrapReference(static_cast<InputType>(input)));
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return !all_of; }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(static_cast<OutputType>(all_of));
+  }
+};
+
+template <typename InputType, typename Predicate>
+struct AnyOfImpl {
+  using OutputType = bool;
+
+  Predicate predicate;
+  bool any_of = false;
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&&) {
+    any_of = predicate(UnwrapReference(static_cast<InputType>(input)));
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return any_of; }
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(static_cast<OutputType>(any_of));
   }
 };
 
@@ -755,9 +1098,10 @@ std::true_type HasRemoveSuffix(Container&);
 std::false_type HasRemoveSuffix(...);
 }  // namespace internal_htls_range
 
-template <typename Range, typename... Combinators>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto Apply(Range&& range,
-                                        Combinators&&... combinators) {
+template <template <typename...> typename Terminator,
+          typename... TerminatorParams, typename Range, typename... Combinators>
+ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
+    Range&& range, Combinators&&... combinators) {
   if constexpr (sizeof...(Combinators) == 0) {
     return std::forward<Range>(range);
   } else {
@@ -765,10 +1109,22 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE auto Apply(Range&& range,
         ProcessingStyle::kComplete, decltype(std::forward<Range>(range)),
         std::decay_t<Combinators>...>;
     Chain chain{std::forward<Combinators>(combinators)...};
-    internal_htls_range::ValueHolder<typename Chain::OutputType> value;
-    chain.ProcessComplete(std::forward<Range>(range), value);
-    chain.End(value);
-    return std::move(*value.value);
+    Terminator<typename Chain::OutputType, TerminatorParams...> terminator;
+    return chain.ProcessComplete(std::forward<Range>(range), terminator);
+  }
+}
+template <typename Range, typename... Combinators>
+ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
+    Range&& range, Combinators&&... combinators) {
+  constexpr bool has_and_then =
+      (internal_htls_range::HasAndThen<std::decay_t<Combinators>>::value ||
+       ...);
+  if constexpr (has_and_then) {
+    return Apply<internal_htls_range::StatusChainTerminator>(
+        std::forward<Range>(range), std::forward<Combinators>(combinators)...);
+  } else {
+    return Apply<internal_htls_range::ChainTerminator>(
+        std::forward<Range>(range), std::forward<Combinators>(combinators)...);
   }
 }
 
@@ -781,7 +1137,7 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE auto Compose(FirstCombinator&& first,
                                     std::forward<Combinators>(combinators)...};
 }
 
-template <ProcessingStyle input_processing_style,
+template <bool has_and_then, ProcessingStyle input_processing_style,
           ProcessingStyle output_processing_style,
           template <typename...> typename Combinator,
           typename... CombinatorParameters, typename... Ts>
@@ -798,48 +1154,75 @@ auto MakeCombinator(Ts&&... ts) {
       };
   return internal_htls_range::CombinatorCreatorWrapper<
       input_processing_style, output_processing_style,
-      std::decay_t<decltype(creator)>>{creator};
+      std::decay_t<decltype(creator)>, has_and_then>{creator};
+}
+
+template <ProcessingStyle input_processing_style,
+          ProcessingStyle output_processing_style,
+          template <typename...> typename Combinator,
+          typename... CombinatorParameters, typename... Ts>
+auto MakeCombinator(Ts&&... ts) {
+  return MakeCombinator<false, input_processing_style, output_processing_style,
+                        Combinator, CombinatorParameters...>(
+      std::forward<Ts>(ts)...);
 }
 
 inline auto ToVector() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kComplete,
-                               internal_htls_range::ToVectorImpl>();
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::ToVectorImpl>();
 }
 
 template <typename Predicate>
 auto Filter(Predicate predicate) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::FilterImpl, Predicate>(
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::FilterImpl, Predicate>(
       std::move(predicate));
 }
 
 template <typename F>
 auto Transform(F f) {
+  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+                        internal_htls_range::TransformImpl, F>(std::move(f));
+}
+
+template <typename F>
+auto TransformEach(F f) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::TransformImpl, F>(
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::TransformEachImpl, F>(
       std::move(f));
+}
+
+inline auto AndThen() {
+  return MakeCombinator<true, ProcessingStyle::kComplete,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AndThenImpl>();
+}
+
+inline auto AndThenEach() {
+  return MakeCombinator<true, ProcessingStyle::kIncremental,
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::AndThenImpl>();
 }
 
 template <typename Comparator>
 auto Sort(Comparator comparator) {
-  auto sort = [comparator = std::move(comparator)](auto& range) {
+  auto sort = [comparator =
+                   std::move(comparator)](auto&& range) -> decltype(auto) {
     auto unwrapped_comparator = [&](auto& a, auto& b) {
       return comparator(UnwrapReference(a), UnwrapReference(b));
     };
     std::sort(range.begin(), range.end(), unwrapped_comparator);
+    return std::forward<decltype(range)>(range);
   };
-
-  return MakeCombinator<
-      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-      internal_htls_range::MutateRangeImpl, decltype(sort)>(std::move(sort));
+  return Transform(sort);
 }
-
 template <typename Equality>
 auto Unique(Equality equality) {
-  auto unique = [equality = std::move(equality)](auto& range) {
+  auto unique = [equality =
+                     std::move(equality)](auto&& range) -> decltype(auto) {
     auto unwrapped_equality = [&](auto& a, auto& b) {
       return equality(UnwrapReference(a), UnwrapReference(b));
     };
@@ -850,68 +1233,74 @@ auto Unique(Equality equality) {
     } else {
       range.erase(last, range.end());
     }
+    return std::forward<decltype(range)>(range);
   };
 
-  return MakeCombinator<
-      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-      internal_htls_range::MutateRangeImpl, decltype(unique)>(
-      std::move(unique));
+  return Transform(unique);
+}
+
+template <typename Equal>
+auto UniqueEach(Equal equal) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::UniqueEachImpl, Equal>(
+      std::move(equal));
 }
 
 inline auto Take(size_t count) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::TakeImpl>(count);
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::TakeImpl>(count);
 }
 
 inline auto Flatten() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::FlattenImpl>();
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::FlattenImpl>();
 }
 
 inline auto Enumerate() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::EnumerateImpl>();
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::EnumerateImpl>();
 }
 inline auto Unenumerate() {
   auto un_enumerate = [](auto&& e) -> decltype(auto) {
     return e.ForwardValue();
   };
-  return Transform((un_enumerate));
+  return TransformEach((un_enumerate));
 }
 
-inline auto Ref() {
+inline auto RefEach() {
   auto to_ref = [](auto&& r) {
     static_assert(!std::is_rvalue_reference_v<decltype(r)>,
                   "Attempting to call std::ref on a temporary.");
     return std::ref(std::forward<decltype(r)>(r));
   };
-  return Transform(to_ref);
+  return TransformEach(to_ref);
 }
 
-inline auto Move() {
+inline auto MoveEach() {
   auto move = [](auto& r) -> decltype(auto) {
     return std::move(UnwrapReference(r));
   };
-  return Transform(move);
+  return TransformEach(move);
 }
 
-inline auto LRef() {
+inline auto LRefEach() {
   auto lref = [](auto&& r) -> decltype(auto) { return UnwrapReference(r); };
-  return Transform(lref);
+  return TransformEach(lref);
 }
 
-inline auto AddressOf() {
-  return Transform(internal_htls_range::AddressOfFunctor{});
+inline auto AddressOfEach() {
+  return TransformEach(internal_htls_range::AddressOfFunctor{});
 }
 
-inline auto Deref() {
+inline auto DerefEach() {
   auto deref = [](auto&& r) -> decltype(auto) {
     return *UnwrapReference(std::forward<decltype(r)>(r));
   };
-  return Transform(deref);
+  return TransformEach(deref);
 }
 
 template <typename Accumulated, typename F>
@@ -941,6 +1330,27 @@ auto ForEach(F f) {
         ++count;
         f(std::forward<decltype(value)>(value));
       });
+}
+
+template <typename Predicate>
+auto AnyOf(Predicate predicate) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AnyOfImpl, Predicate>(
+      std::move(predicate));
+}
+
+template <typename Predicate>
+auto AllOf(Predicate predicate) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AllOfImpl, Predicate>(
+      std::move(predicate));
+}
+
+template <typename Predicate>
+auto NoneOf(Predicate predicate) {
+  return AllOf(std::not_fn(std::move(predicate)));
 }
 
 }  // namespace htls::range
