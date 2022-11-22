@@ -55,7 +55,7 @@ namespace htls::range {
 //   ToVector() //
 // );
 template <typename Range, typename... Combinators>
-auto Apply(Range&& range, Combinators&&... combinators);
+decltype(auto) Apply(Range&& range, Combinators&&... combinators);
 
 // Returns a combinator composed of other combinators.
 template <typename FirstCombinator, typename... Combinators>
@@ -299,8 +299,12 @@ struct WrapperAndFinal {
   }
 
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(T&& t) {
-    wrapper.ProcessComplete(std::forward<T>(t), final);
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
+    return wrapper.ProcessComplete(std::forward<T>(t), final);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End() {
+    return wrapper.End(final);
   }
 };
 
@@ -340,9 +344,15 @@ class CombinatorWrapper {
   }
 
   template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr void End(Final&& final) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr decltype(auto) End(Final&& final) {
+    static_assert(CombinatorCreator::kInputProcessingStyle ==
+                      ProcessingStyle::kIncremental,
+                  "End called on a complete processing "
+                  "combinator.");
     if constexpr (kHasEnd<Combinator, decltype(Next(final))>) {
-      combinator_.End(Next(final));
+      return combinator_.End(Next(final));
+    } else {
+      return Next(final).End();
     }
   }
   ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool Done() const {
@@ -378,7 +388,8 @@ class CombinatorWrapper {
   }
 
   template <typename T, typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(T&& t, Final&& final) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t,
+                                                              Final&& final) {
     constexpr bool has_process_complete =
         kHasProcessComplete<Combinator, InputType, decltype(Next(final))>;
     constexpr bool has_process_incremental =
@@ -390,7 +401,8 @@ class CombinatorWrapper {
           "Combinator with complete processing style does not implement "
           "ProcessComplete.");
       if constexpr (has_process_complete) {
-        combinator_.ProcessComplete(static_cast<InputType>(t), Next(final));
+        return combinator_.ProcessComplete(static_cast<InputType>(t),
+                                           Next(final));
       }
     } else {
       for (InputType input : t) {
@@ -405,6 +417,7 @@ class CombinatorWrapper {
                                          Next(final));
         }
       }
+      return End(final);
     }
   }
 
@@ -491,11 +504,10 @@ struct CombinatorChainImpl;
 
 // Holds the final value at the end of the chain of combinators.
 template <typename InputType>
-struct ValueHolder {
-  std::optional<std::decay_t<InputType>> value;
-
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType t) {
-    value = static_cast<InputType>(t);
+struct ChainTerminator {
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE T ProcessComplete(T&& t) {
+    return std::forward<T>(t);
   }
 };
 
@@ -545,9 +557,9 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
             typename = std::enable_if_t<sizeof(Final) != 0 &&
                                         kInputProcessingStyle ==
                                             ProcessingStyle::kComplete>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType input,
-                                                    Final&& final) {
-    internal_htls_range::GetWrapper<0>(*this).ProcessComplete(
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+                                                              Final&& final) {
+    return internal_htls_range::GetWrapper<0>(*this).ProcessComplete(
         static_cast<InputType>(input), final);
   }
 
@@ -567,8 +579,10 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
 
   // Calls End on all the combinators.
   template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr void End(Final&& final) {
-    (internal_htls_range::GetWrapper<Is>(*this).End(final), ...);
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Final&& final) {
+    static_assert(kInputProcessingStyle == ProcessingStyle::kIncremental,
+                  "End called on complete processing combinator");
+    return internal_htls_range::GetWrapper<0>(*this).End(final);
   }
 };
 
@@ -606,8 +620,8 @@ struct ToVectorImpl {
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void End(Next&& next) {
-    next.ProcessComplete(std::move(vector));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(std::move(vector));
   }
 };
 
@@ -659,16 +673,15 @@ struct TransformImpl {
 
 template <typename InputType, typename F>
 struct MutateRangeImpl {
-  using OutputType = std::decay_t<InputType>&&;
+  using OutputType = InputType;
 
   F f;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessComplete(InputType input,
-                                                    Next&& next) {
-    auto range = static_cast<InputType>(input);
-    f(UnwrapReference(range));
-    next.ProcessComplete(std::move(range));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+                                                              Next&& next) {
+    f(UnwrapReference(input));
+    return next.ProcessComplete(static_cast<OutputType>(input));
   }
 };
 
@@ -729,8 +742,8 @@ struct AccumulateInPlaceImpl {
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void End(Next&& next) {
-    next.ProcessComplete(std::move(accumulated));
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(std::move(accumulated));
   }
 };
 
@@ -756,8 +769,8 @@ std::false_type HasRemoveSuffix(...);
 }  // namespace internal_htls_range
 
 template <typename Range, typename... Combinators>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto Apply(Range&& range,
-                                        Combinators&&... combinators) {
+ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
+    Range&& range, Combinators&&... combinators) {
   if constexpr (sizeof...(Combinators) == 0) {
     return std::forward<Range>(range);
   } else {
@@ -765,10 +778,8 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE auto Apply(Range&& range,
         ProcessingStyle::kComplete, decltype(std::forward<Range>(range)),
         std::decay_t<Combinators>...>;
     Chain chain{std::forward<Combinators>(combinators)...};
-    internal_htls_range::ValueHolder<typename Chain::OutputType> value;
-    chain.ProcessComplete(std::forward<Range>(range), value);
-    chain.End(value);
-    return std::move(*value.value);
+    internal_htls_range::ChainTerminator<typename Chain::OutputType> terminator;
+    return chain.ProcessComplete(std::forward<Range>(range), terminator);
   }
 }
 

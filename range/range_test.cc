@@ -200,9 +200,11 @@ TEST(TestOutputCombinators, TransformFilterTakeToVector) {
 
 TEST(TestOutputCombinators, SortGreater) {
   std::vector<int> v{1, 2, 3};
-  auto result = Apply(v, Sort(std::greater<>()));
+  auto& result = Apply(v, Sort(std::greater<>()));
+  static_assert(std::is_same_v<decltype(Apply(v, Sort(std::greater<>()))),
+                               std::vector<int>&>);
   EXPECT_THAT(result, ElementsAre(3, 2, 1));
-  EXPECT_THAT(v, ElementsAre(1, 2, 3));
+  EXPECT_THAT(&v, &result);
 }
 
 TEST(TestOutputCombinators, Flatten) {
@@ -211,12 +213,11 @@ TEST(TestOutputCombinators, Flatten) {
   EXPECT_THAT(result,
               ElementsAre('H', 'e', 'l', 'l', 'o', 'W', 'o', 'r', 'l', 'd'));
 }
-
 TEST(TestOutputCombinators, SortUnique) {
   std::vector<int> v{3, 2, 3, 1};
-  auto result = Apply(v, Sort(), Unique());
+  auto& result = Apply(v, Sort(), Unique());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
-  EXPECT_THAT(v, ElementsAre(3, 2, 3, 1));
+  EXPECT_THAT(&v, &result);
 }
 
 TEST(TestOutputCombinators, SortUniqueSpan) {
@@ -273,6 +274,10 @@ class MoveTrackingVector {
 TEST(TestOutputCombinators, SortGreaterMove) {
   MoveTrackingVector<int> v{1, 2, 3};
   auto result = Apply(std::move(v), Sort(std::greater<>()));
+  static_assert(
+      std::is_same_v<decltype(Apply(std::move(v), Sort(std::greater<>()))),
+                     MoveTrackingVector<int>>);
+
   EXPECT_THAT(result, ElementsAre(3, 2, 1));
   v.reset();
   EXPECT_TRUE(v.moved());
