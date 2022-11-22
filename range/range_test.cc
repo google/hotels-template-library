@@ -37,6 +37,16 @@ using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Field;
 
+// To aid with testing things like stopping iteration early
+// this combinator just does an identity transform and increments a counter
+
+auto Counter(int& count) {
+  return Transform([&count](auto&& value) mutable -> decltype(auto) {
+    ++count;
+    return std::forward<decltype(value)>(value);
+  });
+}
+
 TEST(TestOutputCombinators, NoCombinators) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v);
@@ -218,6 +228,71 @@ TEST(TestOutputCombinators, SortUnique) {
   auto& result = Apply(v, Sort(), Unique());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
   EXPECT_THAT(&v, &result);
+}
+
+// See truth table at
+// https://en.cppreference.com/w/cpp/algorithm/all_any_none_of
+
+TEST(TestOutputCombinators, AllOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, AllOf(identity)), true);
+  EXPECT_THAT(Apply(some_true, AllOf(identity)), false);
+  EXPECT_THAT(Apply(all_false, AllOf(identity)), false);
+  EXPECT_THAT(Apply(empty, AllOf(identity)), true);
+}
+
+TEST(TestOutputCombinators, AllOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), AllOf(identity));
+  EXPECT_THAT(count, 1);
+}
+TEST(TestOutputCombinators, AnyOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, AnyOf(identity)), true);
+  EXPECT_THAT(Apply(some_true, AnyOf(identity)), true);
+  EXPECT_THAT(Apply(all_false, AnyOf(identity)), false);
+  EXPECT_THAT(Apply(empty, AnyOf(identity)), false);
+}
+
+TEST(TestOutputCombinators, AnyOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), AnyOf(identity));
+  EXPECT_THAT(count, 2);
+}
+
+TEST(TestOutputCombinators, NoneOf) {
+  auto all_true = {true, true, true};
+  auto some_true = {false, true, false};
+  auto all_false = {false, false, false};
+  auto empty = std::initializer_list<bool>{};
+
+  auto identity = [](bool b) { return b; };
+  EXPECT_THAT(Apply(all_true, NoneOf(identity)), false);
+  EXPECT_THAT(Apply(some_true, NoneOf(identity)), false);
+  EXPECT_THAT(Apply(all_false, NoneOf(identity)), true);
+  EXPECT_THAT(Apply(empty, NoneOf(identity)), true);
+}
+
+TEST(TestOutputCombinators, NoneOfShortCircuit) {
+  auto some_true = {false, true, false};
+  auto identity = [](bool b) { return b; };
+  int count = 0;
+  Apply(some_true, Counter(count), NoneOf(identity));
+  EXPECT_THAT(count, 2);
 }
 
 TEST(TestOutputCombinators, SortUniqueSpan) {

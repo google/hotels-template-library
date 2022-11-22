@@ -138,6 +138,18 @@ auto ForEach(F f);
 template <typename Accumulated, typename F>
 auto Accumulate(Accumulated accumulated, F f);
 
+// Tests if any element fulfills a condition
+template <typename Predicate>
+auto AnyOf(Predicate predicate);
+
+// Tests if all the elements fulfills a condition
+template <typename Predicate>
+auto AllOf(Predicate predicate);
+
+// Tests if none of the elements fulfills a condition
+template <typename Predicate>
+auto NoneOf(Predicate predicate);
+
 // The following are needed to implement combinators:
 
 // Whether a combinator's input or output is a range or value.
@@ -747,6 +759,48 @@ struct AccumulateInPlaceImpl {
   }
 };
 
+template <typename InputType, typename Predicate>
+struct AllOfImpl {
+  using OutputType = bool&&;
+
+  Predicate predicate;
+
+  bool all_of = true;
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&&) {
+    all_of = predicate(UnwrapReference(static_cast<InputType>(input)));
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return !all_of; }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(static_cast<OutputType>(all_of));
+  }
+};
+
+template <typename InputType, typename Predicate>
+struct AnyOfImpl {
+  using OutputType = bool;
+
+  Predicate predicate;
+  bool any_of = false;
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&&) {
+    any_of = predicate(UnwrapReference(static_cast<InputType>(input)));
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return any_of; }
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(static_cast<OutputType>(any_of));
+  }
+};
+
 struct AddressOfFunctor {
   template <typename T>
   ABSL_ATTRIBUTE_ALWAYS_INLINE T* operator()(T& t) const {
@@ -814,24 +868,23 @@ auto MakeCombinator(Ts&&... ts) {
 
 inline auto ToVector() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kComplete,
-                               internal_htls_range::ToVectorImpl>();
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::ToVectorImpl>();
 }
 
 template <typename Predicate>
 auto Filter(Predicate predicate) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::FilterImpl, Predicate>(
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::FilterImpl, Predicate>(
       std::move(predicate));
 }
 
 template <typename F>
 auto Transform(F f) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::TransformImpl, F>(
-      std::move(f));
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::TransformImpl, F>(std::move(f));
 }
 
 template <typename Comparator>
@@ -843,9 +896,9 @@ auto Sort(Comparator comparator) {
     std::sort(range.begin(), range.end(), unwrapped_comparator);
   };
 
-  return MakeCombinator<
-      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-      internal_htls_range::MutateRangeImpl, decltype(sort)>(std::move(sort));
+  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+                        internal_htls_range::MutateRangeImpl, decltype(sort)>(
+      std::move(sort));
 }
 
 template <typename Equality>
@@ -863,28 +916,27 @@ auto Unique(Equality equality) {
     }
   };
 
-  return MakeCombinator<
-      ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-      internal_htls_range::MutateRangeImpl, decltype(unique)>(
+  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+                        internal_htls_range::MutateRangeImpl, decltype(unique)>(
       std::move(unique));
 }
 
 inline auto Take(size_t count) {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::TakeImpl>(count);
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::TakeImpl>(count);
 }
 
 inline auto Flatten() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::FlattenImpl>();
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::FlattenImpl>();
 }
 
 inline auto Enumerate() {
   return MakeCombinator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental,
-                               internal_htls_range::EnumerateImpl>();
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::EnumerateImpl>();
 }
 inline auto Unenumerate() {
   auto un_enumerate = [](auto&& e) -> decltype(auto) {
@@ -952,6 +1004,27 @@ auto ForEach(F f) {
         ++count;
         f(std::forward<decltype(value)>(value));
       });
+}
+
+template <typename Predicate>
+auto AnyOf(Predicate predicate) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AnyOfImpl, Predicate>(
+      std::move(predicate));
+}
+
+template <typename Predicate>
+auto AllOf(Predicate predicate) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AllOfImpl, Predicate>(
+      std::move(predicate));
+}
+
+template <typename Predicate>
+auto NoneOf(Predicate predicate) {
+  return AllOf(std::not_fn(std::move(predicate)));
 }
 
 }  // namespace htls::range
