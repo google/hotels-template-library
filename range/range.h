@@ -27,6 +27,8 @@
 
 #include <absl/base/attributes.h>
 
+// See go/output-combinators for the document on which this is based
+
 // Alternative solution to composing ranges
 // Based on
 // https://www.fluentcpp.com/2019/02/12/the-terrible-problem-of-incrementing-a-smart-iterator/
@@ -39,10 +41,28 @@
 // 2. Linear growth of stack-size instead of exponential
 // 3. Combinators are simpler to read and write.
 
-// This is simpler and less error-prone than websitetools::feeds::range (you
-// never need stash) and likely more performant (you are not doing begin != end
-// comparisons at every step in the chain). However, websitetools::feeds::range
-// is more flexible.
+// The most important concept to understand when using this library is that of
+// Processing Style. Processing Style refers to how a combinator processes its
+// input and output. There are two kinds of styles, complete and incremental.
+
+// Complete processing style processes a range as a whole. Think of sort. It
+// sorts the whole range. Incremental processing style, processes the
+// elements of the range. Think of filter which filters each element
+// individually, independent of the other elements.
+
+// A combinator can have different styles for input and output. For example,
+// ToVector, takes incremental input, and outputs complete output (an entire
+// vector). Another example of this is Accumulate, which takes incremental
+// input, and outputs the accumulated value as a whole.
+
+// A combinator chain that is run, must end with a combinator that outputs a
+// complete value.
+
+// When you chain combinators, the input style of the current combinator must
+// match the output style of the previous combinator. However, the library
+// automatically will convert complete output of one combinator to incremental
+// input for the next combinator. That way you can have Filter, immediately
+// after Sort.
 
 namespace htls::range {
 
@@ -63,6 +83,8 @@ auto Compose(FirstCombinator&& first, Combinators&&... combinators);
 
 // Filters based on a predicate. Only outputs values for which the predicate
 // returns true.
+// In: Incremental
+// Out: Incremental
 // Example:
 // std::vector<int> input_range = {1, 2, 3, 4};
 // std::vector<int> result = Apply(
@@ -75,6 +97,9 @@ template <typename Predicate>
 auto Filter(Predicate predicate);
 
 // Transforms a range. It outputs the result of f.
+// In: Incremental
+// Out: Incremental
+// Example:
 // std::vector<int> input_range = {1, 2, 3, 4};
 // std::vector<int> result = Apply(
 //   input_range, //
@@ -89,28 +114,41 @@ template <typename F>
 auto Transform(F f);
 
 // Converts the output to a vector. The type of the vector is deduced.
+// In: Incremental
+// Out: Complete
 inline auto ToVector();
 
 // Sorts the output.
+// In: Complete
+// Out: Complete
+// Note: Sort will sort the range in-place.
 template <typename Comparator = std::less<>>
 auto Sort(Comparator comparator = {});
 
-// Calls std::unique on the range, then removes the non-unique elements at the
-// end either via remove_suffix (supported by Span), or by erase (supported by
-// most sequence containers). Range must be sorted.
+// For sorted input, filters out the repeating elements.
+// In: Incremental
+// Out: Incremental
 template <typename Equality = std::equal_to<>>
 auto Unique(Equality equality = {});
 
-// Flatten range of range into a single range.
+// Flattens a range of ranges into a single range.
+// In: Incremental
+// Out: Incremental
 inline auto Flatten();
 
 // Takes count elements from the range.
+// In: Incremental
+// Out: Incremental
 inline auto Take(size_t count);
 
 // Transforms to std::reference_wrapper
+// In: Incremental
+// Out: Incremental
 inline auto Ref();
 
 // Transforms to r-value reference.
+// In: Incremental
+// Out: Incremental
 inline auto Move();
 
 // Structure to hold enumated values
@@ -125,28 +163,42 @@ template <typename R>
 EnumeratedValue(size_t, R) -> EnumeratedValue<R>;
 
 // Enumerates values, providing an index.
+// In: Incremental
+// Out: Incremental
 inline auto Enumerate();
 
 // Drops the index and returns values
+// In: Incremental
+// Out: Incremental
 inline auto Unenumerate();
 
 // Calls f for each value and returns the number of times f was called.
+// In: Incremental
+// Out: Complete
 template <typename F>
 auto ForEach(F f);
 
 // Accumulates the values.
+// In: Incremental
+// Out: Complete
 template <typename Accumulated, typename F>
 auto Accumulate(Accumulated accumulated, F f);
 
 // Tests if any element fulfills a condition
+// In: Incremental
+// Out: Complete
 template <typename Predicate>
 auto AnyOf(Predicate predicate);
 
 // Tests if all the elements fulfills a condition
+// In: Incremental
+// Out: Complete
 template <typename Predicate>
 auto AllOf(Predicate predicate);
 
 // Tests if none of the elements fulfills a condition
+// In: Incremental
+// Out: Complete
 template <typename Predicate>
 auto NoneOf(Predicate predicate);
 
