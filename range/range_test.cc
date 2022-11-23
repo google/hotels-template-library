@@ -162,6 +162,19 @@ TEST(TestOutputCombinators, TransformToVector) {
   EXPECT_THAT(result, ElementsAre(1.5, 2.5, 3.5));
 }
 
+TEST(TestOutputCombinators, TransformComplete) {
+  auto to_double = [](int i) { return static_cast<double>(i) + 0.5; };
+  auto result = Apply(1,                            //
+                      TransformComplete(to_double)  //
+  );
+
+  static_assert(std::is_same_v<decltype(Apply(1,                            //
+                                              TransformComplete(to_double)  //
+                                              )),
+                               double>);
+  EXPECT_THAT(result, 1.5);
+}
+
 TEST(TestOutputCombinators, FilterToVector) {
   std::vector<int> v{1, 2, 3};
   auto even_numbers = [](int i) { return i % 2 == 0; };
@@ -228,6 +241,23 @@ TEST(TestOutputCombinators, SortUnique) {
   auto& result = Apply(v, Sort(), Unique());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
   EXPECT_THAT(&v, &result);
+}
+
+TEST(TestOutputCombinators, SortFilterDuplicates) {
+  std::vector<int> v{3, 2, 3, 1};
+  auto result = Apply(v, Sort(), FilterDuplicates(), ToVector());
+  EXPECT_THAT(result, ElementsAre(1, 2, 3));
+}
+
+TEST(TestOutputCombinators, SortTransformFilterDuplicates) {
+  std::vector<int> v{3, 2, 3, 1};
+  auto result = Apply(v,                                       //
+                      Sort(),                                  //
+                      Transform([](int i) { return i + 1; }),  //
+                      FilterDuplicates(),                      //
+                      ToVector()                               //
+  );
+  EXPECT_THAT(result, ElementsAre(2, 3, 4));
 }
 
 // See truth table at
@@ -356,20 +386,6 @@ TEST(TestOutputCombinators, SortGreaterMove) {
   EXPECT_THAT(result, ElementsAre(3, 2, 1));
   v.reset();
   EXPECT_TRUE(v.moved());
-}
-
-TEST(TestOutputCombinators, SortGreaterRef) {
-  std::vector<int> v{1, 2, 3};
-  auto result = Apply(std::ref(v), Sort(std::greater<>()));
-  EXPECT_THAT(&result.get(), &v);
-  EXPECT_THAT(v, ElementsAre(3, 2, 1));
-}
-
-TEST(TestOutputCombinators, SortUniqueRef) {
-  std::vector<int> v{3, 2, 3, 1};
-  auto result = Apply(std::ref(v), Sort(), Unique());
-  EXPECT_THAT(&result.get(), &v);
-  EXPECT_THAT(v, ElementsAre(1, 2, 3));
 }
 
 TEST(TestOutputCombinators, SortGreaterToVector) {

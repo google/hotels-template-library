@@ -111,7 +111,7 @@ auto Filter(Predicate predicate);
 // You can pass an invocable like a pointer to member
 // Transform(&MyStruct::int_member_variable)
 template <typename F>
-auto Transform(F f);
+auto TransformComplete(F f);
 
 // Converts the output to a vector. The type of the vector is deduced.
 // In: Incremental
@@ -130,6 +130,12 @@ auto Sort(Comparator comparator = {});
 // Out: Incremental
 template <typename Equality = std::equal_to<>>
 auto Unique(Equality equality = {});
+
+// For sorted input, filters out the repeating elements.
+// In: Incremental
+// Out: Incremental
+template <typename Equality = std::equal_to<>>
+auto FilterDuplicates(Equality equality = {});
 
 // Flattens a range of ranges into a single range.
 // In: Incremental
@@ -550,14 +556,14 @@ struct TypeHelper : Base {
       using ValueType = decltype(*begin(std::declval<OutputType>()));
       return TypeHelper<TypeHelper, I + 1,
                         CombinatorCreator::kOutputProcessingStyle, ValueType,
-                        typename CombinatorCreator::
-                            template Combinator<ValueType>::OutputType>();
+                        typename CombinatorCreator::template Combinator<
+                            ValueType>::OutputType>();
 
     } else {
       return TypeHelper<TypeHelper, I + 1,
                         CombinatorCreator::kOutputProcessingStyle, OutputType,
-                        typename CombinatorCreator::
-                            template Combinator<OutputType>::OutputType>();
+                        typename CombinatorCreator::template Combinator<
+                            OutputType>::OutputType>();
     }
   }
 };
@@ -718,16 +724,68 @@ struct TransformImpl {
 };
 
 template <typename InputType, typename F>
-struct MutateRangeImpl {
-  using OutputType = InputType;
-
+struct TransformCompleteImpl {
+  using InvokeResult =
+      std::invoke_result_t<F&, decltype(std::declval<InputType>())>;
+  using OutputType =
+      decltype(std::forward<InvokeResult>(std::declval<InvokeResult>()));
   F f;
 
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
                                                               Next&& next) {
-    f(UnwrapReference(input));
-    return next.ProcessComplete(static_cast<OutputType>(input));
+    return next.ProcessComplete(
+        static_cast<OutputType>(f(UnwrapReference(input))));
+  }
+};
+
+template <typename InputType, typename Equal>
+struct FilterDuplicatesImpl {
+  using OutputType = InputType;
+  Equal equal;
+  std::conditional_t<std::is_lvalue_reference_v<InputType>,
+                     std::remove_reference_t<InputType>*,
+                     std::optional<std::decay_t<InputType>>>
+      test_element;
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&& next) {
+    if constexpr (std::is_lvalue_reference_v<InputType>) {
+      const bool has_value = test_element;
+      const bool is_equal = has_value && equal(UnwrapReference(input),
+                                               UnwrapReference(*test_element));
+
+      if (!is_equal) {
+        if (has_value) {
+          next.ProcessIncremental(*test_element);
+        }
+        test_element = &input;
+      }
+    } else {
+      const bool has_value = test_element.has_value();
+      const bool is_equal = has_value && equal(UnwrapReference(input),
+                                               UnwrapReference(*test_element));
+      if (!is_equal) {
+        if (has_value) {
+          next.ProcessIncremental(std::move(*test_element));
+        }
+        test_element = static_cast<InputType>(input);
+      }
+    }
+  }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    if constexpr (std::is_lvalue_reference_v<InputType>) {
+      if (test_element) {
+        next.ProcessIncremental(*test_element);
+      }
+    } else {
+      if (test_element.has_value()) {
+        next.ProcessIncremental(*std::move(test_element));
+      }
+    }
+    return next.End();
   }
 };
 
@@ -817,7 +875,7 @@ struct AllOfImpl {
 
 template <typename InputType, typename Predicate>
 struct AnyOfImpl {
-  using OutputType = bool;
+  using OutputType = bool&&;
 
   Predicate predicate;
   bool any_of = false;
@@ -907,6 +965,13 @@ auto Filter(Predicate predicate) {
 }
 
 template <typename F>
+auto TransformComplete(F f) {
+  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
+                        internal_htls_range::TransformCompleteImpl, F>(
+      std::move(f));
+}
+
+template <typename F>
 auto Transform(F f) {
   return MakeCombinator<ProcessingStyle::kIncremental,
                         ProcessingStyle::kIncremental,
@@ -915,21 +980,20 @@ auto Transform(F f) {
 
 template <typename Comparator>
 auto Sort(Comparator comparator) {
-  auto sort = [comparator = std::move(comparator)](auto& range) {
+  auto sort = [comparator =
+                   std::move(comparator)](auto&& range) -> decltype(auto) {
     auto unwrapped_comparator = [&](auto& a, auto& b) {
       return comparator(UnwrapReference(a), UnwrapReference(b));
     };
     std::sort(range.begin(), range.end(), unwrapped_comparator);
+    return std::forward<decltype(range)>(range);
   };
-
-  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-                        internal_htls_range::MutateRangeImpl, decltype(sort)>(
-      std::move(sort));
+  return TransformComplete(sort);
 }
-
 template <typename Equality>
 auto Unique(Equality equality) {
-  auto unique = [equality = std::move(equality)](auto& range) {
+  auto unique = [equality =
+                     std::move(equality)](auto&& range) -> decltype(auto) {
     auto unwrapped_equality = [&](auto& a, auto& b) {
       return equality(UnwrapReference(a), UnwrapReference(b));
     };
@@ -940,17 +1004,24 @@ auto Unique(Equality equality) {
     } else {
       range.erase(last, range.end());
     }
+    return std::forward<decltype(range)>(range);
   };
 
-  return MakeCombinator<ProcessingStyle::kComplete, ProcessingStyle::kComplete,
-                        internal_htls_range::MutateRangeImpl, decltype(unique)>(
-      std::move(unique));
+  return TransformComplete(unique);
 }
 
 inline auto Take(size_t count) {
   return MakeCombinator<ProcessingStyle::kIncremental,
                         ProcessingStyle::kIncremental,
                         internal_htls_range::TakeImpl>(count);
+}
+
+template <typename Equal>
+auto FilterDuplicates(Equal equal) {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kIncremental,
+                        internal_htls_range::FilterDuplicatesImpl, Equal>(
+      std::move(equal));
 }
 
 inline auto Flatten() {
