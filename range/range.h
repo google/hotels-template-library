@@ -78,8 +78,8 @@ template <typename Range, typename... Combinators>
 decltype(auto) Apply(Range&& range, Combinators&&... combinators);
 
 // Returns a combinator composed of other combinators.
-template <typename FirstCombinator, typename... Combinators>
-auto Compose(FirstCombinator&& first, Combinators&&... combinators);
+template <typename... Combinators>
+auto Compose(Combinators&&... combinators);
 
 // Filters based on a predicate. Only outputs values for which the predicate
 // returns true.
@@ -324,67 +324,108 @@ template <typename Combinator>
 static constexpr bool kHasDone = HasDone<Combinator>::value;
 
 template <size_t I>
-using Index = std::integral_constant<size_t, I>;
+struct Index : std::integral_constant<size_t, I> {};
+
+// Flatten nested tuples
+// https://gcc.godbolt.org/z/5r1eGroa3 (written by jbandela)
+
+template <size_t I, typename Tuple>
+decltype(auto) operator+(Tuple&& t, Index<I>) {
+  return std::get<I>(std::forward<Tuple>(t));
+}
+
+struct TupleFlattenerBase {
+  static void Get() {}
+};
+
+// Used in fold expression to flatten tuple.
+template <typename Base, size_t starting_index, size_t I, size_t... Is>
+struct TupleFlattener : Base {
+  using Base::Get;
+  template <typename Tuple>
+  static decltype(auto) Get(Index<I> index, Tuple&& tuple) {
+    return std::get<I - starting_index>(
+        (std::forward<Tuple>(tuple) + ... + Index<Is>()));
+  }
+  static constexpr size_t size() { return I + 1; }
+};
+
+// Starting type of the fold expression.
+template <typename Base, size_t starting_index, size_t I, size_t... Is>
+struct StartingTupleFlattener : Base {};
+
+template <typename Base, size_t starting_index, size_t I, size_t... Is,
+          typename T>
+auto operator+(TupleFlattener<Base, starting_index, I, Is...>, T&&) {
+  using NewBase = TupleFlattener<Base, starting_index, I, Is...>;
+  return TupleFlattener<NewBase, starting_index, I + 1, Is...>();
+}
+
+template <typename Base, size_t starting_index, size_t I, size_t... Is,
+          typename T>
+auto operator+(StartingTupleFlattener<Base, starting_index, I, Is...>, T&&) {
+  return TupleFlattener<Base, starting_index, I, Is...>();
+}
+
+template <typename Base, size_t starting_index, size_t I, size_t... Is,
+          typename... T>
+auto operator+(TupleFlattener<Base, starting_index, I, Is...>,
+               std::tuple<T...>& t) {
+  using NewBase = TupleFlattener<Base, starting_index, I, Is...>;
+  using FlattenedTuple =
+      decltype((StartingTupleFlattener<NewBase, I + 1, I + 1, Is...,
+                                       I - starting_index + 1>() +
+                ... + std::declval<T&>()));
+  static constexpr auto sz = FlattenedTuple::size();
+  return StartingTupleFlattener<FlattenedTuple, sz - (2 + I - starting_index),
+                                sz, Is...>();
+}
+
+template <typename Base, size_t starting_index, size_t I, size_t... Is,
+          typename... T>
+auto operator+(StartingTupleFlattener<Base, starting_index, I, Is...>,
+               std::tuple<T...>& t) {
+  using FlattenedTuple = decltype((
+      StartingTupleFlattener<Base, I, I, Is..., I - starting_index>() + ... +
+      std::declval<T&>()));
+  static constexpr auto sz = FlattenedTuple::size();
+
+  return StartingTupleFlattener<FlattenedTuple, sz - (I - starting_index + 1),
+                                sz, Is...>();
+}
+
+template <typename FlattenerType, size_t... Is, typename Tuple, typename F>
+decltype(auto) FlattenArgsImpl(std::index_sequence<Is...>, Tuple&& tuple,
+                               F&& f) {
+  return f(FlattenerType::Get(Index<Is>(), std::forward<Tuple>(tuple))...);
+}
+
+template <typename... Ts, typename F>
+decltype(auto) FlattenArgs(F&& f, Ts&&... ts) {
+  using FlattenerType =
+      decltype((StartingTupleFlattener<TupleFlattenerBase, 0, 0>() + ... + ts));
+  return FlattenArgsImpl<FlattenerType>(
+      std::make_index_sequence<FlattenerType::size()>(),
+      std::forward_as_tuple(std::forward<Ts>(ts)...), std::forward<F>(f));
+}
 
 // Wraps a combinator struct. This uses the CRTP trick where Chain is the type
 // that will inherit from all the combinator wrappers in a tuple like structure.
 // Knowing the derived class Chain, allows a CombinatorWrapper to get the next
 // combinator in the chain.
-template <typename Chain, size_t I, typename InputType,
-          typename CombinatorCreator>
-class CombinatorWrapper;
-
-// Uses overloading and upcasting to get the CombinatorWrapper with the
-// specified index in the chain.
-template <size_t I, typename Chain, typename InputType,
-          typename CombinatorCreator>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetWrapper(
-    CombinatorWrapper<Chain, I, InputType, CombinatorCreator>& wrapper) {
-  return wrapper;
-}
-
-// Uses overloading and upcasting to get the CombinatorWrapper with the
-// specified index in the chain.
-template <size_t I, typename Chain, typename InputType,
-          typename CombinatorCreator>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetWrapper(
-    const CombinatorWrapper<Chain, I, InputType, CombinatorCreator>& wrapper) {
-  return wrapper;
-}
-
-template <typename Wrapper, typename Final>
-struct WrapperAndFinal {
-  Wrapper& wrapper;
-  Final& final;
-
-  template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t) {
-    wrapper.ProcessIncremental(std::forward<T>(t), final);
-  }
-
-  template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
-    return wrapper.ProcessComplete(std::forward<T>(t), final);
-  }
-
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End() {
-    return wrapper.End(final);
-  }
-};
-
-template <typename Wrapper, typename Final>
-WrapperAndFinal(Wrapper& wrapper, Final&& final)
-    -> WrapperAndFinal<Wrapper, Final>;
-
 template <typename Chain, size_t I, typename InputTypeParam,
           typename CombinatorCreator>
 class CombinatorWrapper {
  public:
   using InputType = InputTypeParam;
   using Combinator =
-      decltype(std::declval<CombinatorCreator&>()(TypeIdentity<InputType>()));
+      typename CombinatorCreator::template Combinator<InputTypeParam>;
 
   using OutputType = typename Combinator::OutputType;
+
+  decltype(auto) Get(Index<I>) { return *this; }
+  decltype(auto) Get(Index<I>) const { return *this; }
+
   template <typename Creator>
   explicit CombinatorWrapper(Creator&& creator)
       : combinator_(std::forward<Creator>(creator)(TypeIdentity<InputType>())) {
@@ -398,25 +439,21 @@ class CombinatorWrapper {
     return static_cast<const Chain&>(*this);
   }
 
-  template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Next(Final&& final) {
-    if constexpr (I < Chain::kSize - 1) {
-      return WrapperAndFinal{GetWrapper<I + 1>(GetChain()), final};
-    } else {
-      return final;
-    }
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Next() {
+    return GetChain().Get(Index<I + 1>());
   }
 
-  template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr decltype(auto) End(Final&& final) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr decltype(auto) End() {
     static_assert(CombinatorCreator::kInputProcessingStyle ==
                       ProcessingStyle::kIncremental,
                   "End called on a complete processing "
                   "combinator.");
-    if constexpr (kHasEnd<Combinator, decltype(Next(final))>) {
-      return combinator_.End(Next(final));
+    if constexpr (kHasEnd<Combinator, decltype(Next())>) {
+      static_assert(!std::is_void_v<decltype(combinator_.End(Next()))>,
+                    "End must not return void.");
+      return combinator_.End(Next());
     } else {
-      return Next(final).End();
+      return Next().End();
     }
   }
   ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool Done() const {
@@ -431,10 +468,10 @@ class CombinatorWrapper {
     return GetChain().AnyDone(Index<I>());
   }
 
-  template <typename T, typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Final&& final) {
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t) {
     constexpr bool has_process_incremental =
-        kHasProcessIncremental<Combinator, InputType, decltype(Next(final))>;
+        kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
 
     static_assert(
         CombinatorCreator::kInputProcessingStyle ==
@@ -447,17 +484,16 @@ class CombinatorWrapper {
         "Combinator with incremental processing style does not implement "
         "ProcessIncremental.");
     if constexpr (has_process_incremental) {
-      combinator_.ProcessIncremental(static_cast<InputType>(t), Next(final));
+      combinator_.ProcessIncremental(static_cast<InputType>(t), Next());
     }
   }
 
-  template <typename T, typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t,
-                                                              Final&& final) {
+  template <typename T>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
     constexpr bool has_process_complete =
-        kHasProcessComplete<Combinator, InputType, decltype(Next(final))>;
+        kHasProcessComplete<Combinator, InputType, decltype(Next())>;
     constexpr bool has_process_incremental =
-        kHasProcessIncremental<Combinator, InputType, decltype(Next(final))>;
+        kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
     if constexpr (CombinatorCreator::kInputProcessingStyle ==
                   ProcessingStyle::kComplete) {
       static_assert(
@@ -465,8 +501,10 @@ class CombinatorWrapper {
           "Combinator with complete processing style does not implement "
           "ProcessComplete.");
       if constexpr (has_process_complete) {
-        return combinator_.ProcessComplete(static_cast<InputType>(t),
-                                           Next(final));
+        static_assert(!std::is_void_v<decltype(combinator_.ProcessComplete(
+                          static_cast<InputType>(t), Next()))>,
+                      "ProcessComplete must not return void.");
+        return combinator_.ProcessComplete(static_cast<InputType>(t), Next());
       }
     } else {
       for (InputType input : t) {
@@ -477,11 +515,10 @@ class CombinatorWrapper {
             "ProcessIncremental.");
 
         if constexpr (has_process_incremental) {
-          combinator_.ProcessIncremental(static_cast<InputType>(input),
-                                         Next(final));
+          combinator_.ProcessIncremental(static_cast<InputType>(input), Next());
         }
       }
-      return End(final);
+      return End();
     }
   }
 
@@ -489,21 +526,9 @@ class CombinatorWrapper {
   Combinator combinator_;
 };
 
-template <typename CombinatorCreator>
-struct CombinatorCreatorHolder {
-  template <typename T>
-  using OutputType =
-      typename std::decay_t<decltype(std::declval<CombinatorCreator>()(
-          TypeIdentity<T>()))>::OutputType;
-
-  static constexpr ProcessingStyle kInputProcessingStyle =
-      CombinatorCreator::kInputProcessingStyle;
-
-  static constexpr ProcessingStyle kOutputProcessingStyle =
-      CombinatorCreator::kOutputProcessingStyle;
+struct BaseTypeHelper {
+  static void Get() {}
 };
-
-struct BaseTypeHelper {};
 
 // Does the type computation, and is used the fold to compute the input and
 // output types of the combinator chain.
@@ -513,36 +538,29 @@ struct TypeHelper : Base {
   using InputType = InputTypeParam;
   using OutputType = OutputTypeParam;
 
+  using Base::Get;
+  static TypeHelper Get(Index<I>) { return {}; }
+
   template <typename CombinatorCreator>
-  auto operator+(CombinatorCreatorHolder<CombinatorCreator> holder) {
+  auto operator+(CombinatorCreator&) {
     if constexpr (output_processing_style == ProcessingStyle::kComplete &&
-                  holder.kInputProcessingStyle ==
+                  CombinatorCreator::kInputProcessingStyle ==
                       ProcessingStyle::kIncremental) {
       using std::begin;
       using ValueType = decltype(*begin(std::declval<OutputType>()));
-      return TypeHelper<
-          TypeHelper, I + 1, holder.kOutputProcessingStyle, ValueType,
-          typename CombinatorCreatorHolder<
-              CombinatorCreator>::template OutputType<ValueType>>();
+      return TypeHelper<TypeHelper, I + 1,
+                        CombinatorCreator::kOutputProcessingStyle, ValueType,
+                        typename CombinatorCreator::
+                            template Combinator<ValueType>::OutputType>();
 
     } else {
-      return TypeHelper<
-          TypeHelper, I + 1, holder.kOutputProcessingStyle, OutputType,
-          typename CombinatorCreatorHolder<
-              CombinatorCreator>::template OutputType<OutputType>>();
+      return TypeHelper<TypeHelper, I + 1,
+                        CombinatorCreator::kOutputProcessingStyle, OutputType,
+                        typename CombinatorCreator::
+                            template Combinator<OutputType>::OutputType>();
     }
   }
 };
-
-// Uses overloading and upcasting to find the type helper corresponding to the
-// index.
-template <size_t I, typename Base, ProcessingStyle output_processing_style,
-          typename InputType, typename OutputType>
-auto GetTypeHelper(
-    TypeHelper<Base, I, output_processing_style, InputType, OutputType>
-        helper) {
-  return helper;
-}
 
 // Tuple like struct computing the types.
 template <ProcessingStyle starting_input_processing_style, typename StartingT,
@@ -550,20 +568,19 @@ template <ProcessingStyle starting_input_processing_style, typename StartingT,
 using Types =
     decltype((TypeHelper<BaseTypeHelper, 0, starting_input_processing_style,
                          StartingT, StartingT>() +
-
-              ... + CombinatorCreatorHolder<CombinatorCreators>()));
+              ... + std::declval<CombinatorCreators&>()));
 
 // The index of types for the combinators are offset 1, because the initial type
 // is just the starting type, so we add 1 to the index given.
 template <typename Types, size_t I>
-using InputType = typename decltype(GetTypeHelper<I + 1>(Types()))::InputType;
+using InputType = typename decltype(Types::Get(Index<I + 1>()))::InputType;
 
 template <typename Types, size_t I>
-using OutputType = typename decltype(GetTypeHelper<I + 1>(Types()))::OutputType;
+using OutputType = typename decltype(Types::Get(Index<I + 1>()))::OutputType;
 
 // Holds the chain of combinators.
-template <ProcessingStyle starting_input_processing_style, typename StartingT,
-          typename Sequence, typename Types, typename... CombinatorCreators>
+template <template <typename> typename Terminator, typename Sequence,
+          typename Types, typename... CombinatorCreators>
 struct CombinatorChainImpl;
 
 // Holds the final value at the end of the chain of combinators.
@@ -577,17 +594,15 @@ struct ChainTerminator {
 
 template <typename Chain, size_t I>
 using Combinator =
-    std::decay_t<decltype(GetWrapper<I>(std::declval<Chain&>()))>;
+    std::decay_t<decltype(std::declval<Chain&>().Get(Index<I>()))>;
 
 // Derives from all the wrapped CombinatorCreators.
-template <ProcessingStyle starting_input_processing_style, typename StartingT,
-          size_t... Is, typename Types, typename... CombinatorCreators>
-struct CombinatorChainImpl<starting_input_processing_style, StartingT,
-                           std::index_sequence<Is...>, Types,
+template <template <typename> typename Terminator, size_t... Is, typename Types,
+          typename... CombinatorCreators>
+struct CombinatorChainImpl<Terminator, std::index_sequence<Is...>, Types,
                            CombinatorCreators...>
     : CombinatorWrapper<
-          CombinatorChainImpl<starting_input_processing_style, StartingT,
-                              std::index_sequence<Is...>, Types,
+          CombinatorChainImpl<Terminator, std::index_sequence<Is...>, Types,
                               CombinatorCreators...>,
           Is, InputType<Types, Is>, CombinatorCreators>... {
   using Self = CombinatorChainImpl;
@@ -595,13 +610,17 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
 
   static_assert(sizeof...(CombinatorCreators) > 0);
 
-  using InputType = StartingT;
   using OutputType = internal_htls_range::OutputType<Types, kSize - 1>;
 
-  static constexpr ProcessingStyle kInputProcessingStyle =
-      starting_input_processing_style;
-  static constexpr ProcessingStyle kOutputProcessingStyle =
-      (CombinatorCreators::kOutputProcessingStyle, ...);
+  using CombinatorWrapper<
+      CombinatorChainImpl<Terminator, std::index_sequence<Is...>, Types,
+                          CombinatorCreators...>,
+      Is, internal_htls_range::InputType<Types, Is>,
+      CombinatorCreators>::Get...;
+
+  Terminator<OutputType> terminator;
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& Get(Index<kSize>) { return terminator; }
 
   template <typename... Ts>
   ABSL_ATTRIBUTE_ALWAYS_INLINE explicit CombinatorChainImpl(Ts&&... ts)
@@ -611,64 +630,41 @@ struct CombinatorChainImpl<starting_input_processing_style, StartingT,
   // Checks if any of the combinators is done, starting at index.
   template <size_t index>
   ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool AnyDone(Index<index>) const {
-    return (
-        (Is >= index && internal_htls_range::GetWrapper<Is>(*this).Done()) ||
-        ...);
-  }
-
-  // Passes t to the first combinator.
-  template <typename Final,
-            typename = std::enable_if_t<sizeof(Final) != 0 &&
-                                        kInputProcessingStyle ==
-                                            ProcessingStyle::kComplete>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
-                                                              Final&& final) {
-    return internal_htls_range::GetWrapper<0>(*this).ProcessComplete(
-        static_cast<InputType>(input), final);
-  }
-
-  template <typename Final,
-            typename = std::enable_if_t<sizeof(Final) != 0 &&
-                                        kInputProcessingStyle ==
-                                            ProcessingStyle::kIncremental>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
-                                                       Final&& final) {
-    internal_htls_range::GetWrapper<0>(*this).ProcessIncremental(
-        static_cast<InputType>(input), final);
-  }
-
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool Done() const {
-    return (internal_htls_range::GetWrapper<Is>(*this).Done() || ...);
-  }
-
-  // Calls End on all the combinators.
-  template <typename Final>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Final&& final) {
-    static_assert(kInputProcessingStyle == ProcessingStyle::kIncremental,
-                  "End called on complete processing combinator");
-    return internal_htls_range::GetWrapper<0>(*this).End(final);
+    return ((Is >= index && this->Get(Index<Is>()).Done()) || ...);
   }
 };
 
-template <typename Chain, size_t I>
-using Combinator =
-    std::decay_t<decltype(GetWrapper<I>(std::declval<Chain&>()))>;
-
 // Alias for CombinatorChain passing the index sequence to CombinatorChainImpl.
-template <ProcessingStyle starting_input_processing_style, typename StartingT,
+template <template <typename T> typename Terminator, typename StartingT,
           typename... CombinatorCreators>
 using CombinatorChain = CombinatorChainImpl<
-    starting_input_processing_style, StartingT,
-    std::make_index_sequence<sizeof...(CombinatorCreators)>,
-    Types<starting_input_processing_style, StartingT, CombinatorCreators...>,
+    Terminator, std::make_index_sequence<sizeof...(CombinatorCreators)>,
+    Types<ProcessingStyle::kComplete, StartingT, CombinatorCreators...>,
     CombinatorCreators...>;
 
 // Wraps the combinator creator and exposes the processing styles.
 template <ProcessingStyle input_processing_style,
-          ProcessingStyle output_processing_style, typename CombinatorCreator>
-struct CombinatorCreatorWrapper : CombinatorCreator {
+          ProcessingStyle output_processing_style, typename ParamsTuple,
+          template <typename...> typename CombinatorTemplate,
+          typename... CombinatorParams>
+struct CombinatorCreator {
+  template <typename T>
+  using Combinator = CombinatorTemplate<T, CombinatorParams...>;
   static constexpr auto kInputProcessingStyle = input_processing_style;
   static constexpr auto kOutputProcessingStyle = output_processing_style;
+  ParamsTuple params_tuple;
+  template <typename... Args>
+  explicit CombinatorCreator(Args&&... args)
+      : params_tuple(std::forward<Args>(args)...) {}
+
+  template <typename T>
+  auto operator()(TypeIdentity<T>) const {
+    return std::apply(
+        [](auto&&... args) {
+          return Combinator<T>{std::forward<decltype(args)>(args)...};
+        },
+        std::move(params_tuple));
+  }
 };
 
 template <typename InputType>
@@ -701,20 +697,6 @@ struct FilterImpl {
     if (f(UnwrapReference(input))) {
       next.ProcessIncremental(input);
     }
-  }
-};
-
-template <ProcessingStyle starting_input_processing_style,
-          typename... CombinatorCreators>
-struct ComposedCombinatorCreator : CombinatorCreators... {
-  static constexpr auto kInputProcessingStyle = starting_input_processing_style;
-  static constexpr auto kOutputProcessingStyle =
-      (CombinatorCreators::kOutputProcessingStyle, ...);
-  template <typename T>
-  auto operator()(TypeIdentity<T>) {
-    return CombinatorChain<starting_input_processing_style, T,
-                           CombinatorCreators...>{
-        std::move(static_cast<CombinatorCreators&>(*this))...};
   }
 };
 
@@ -880,22 +862,23 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
   if constexpr (sizeof...(Combinators) == 0) {
     return std::forward<Range>(range);
   } else {
-    using Chain = internal_htls_range::CombinatorChain<
-        ProcessingStyle::kComplete, decltype(std::forward<Range>(range)),
-        std::decay_t<Combinators>...>;
-    Chain chain{std::forward<Combinators>(combinators)...};
-    internal_htls_range::ChainTerminator<typename Chain::OutputType> terminator;
-    return chain.ProcessComplete(std::forward<Range>(range), terminator);
+    using InputType = decltype(std::forward<Range>(range));
+    auto chain = internal_htls_range::FlattenArgs(
+        [&](auto&&... combinators) mutable {
+          using Chain = internal_htls_range::CombinatorChain<
+              internal_htls_range::ChainTerminator, InputType,
+              std::decay_t<decltype(combinators)>...>;
+          return Chain{std::forward<decltype(combinators)>(combinators)...};
+        },
+        std::forward<Combinators>(combinators)...);
+    return chain.Get(internal_htls_range::Index<0>())
+        .ProcessComplete(std::forward<Range>(range));
   }
 }
 
-template <typename FirstCombinator, typename... Combinators>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto Compose(FirstCombinator&& first,
-                                          Combinators&&... combinators) {
-  return internal_htls_range::ComposedCombinatorCreator<
-      FirstCombinator::kInputProcessingStyle, std::decay_t<FirstCombinator>,
-      std::decay_t<Combinators>...>{std::forward<FirstCombinator>(first),
-                                    std::forward<Combinators>(combinators)...};
+template <typename... Combinators>
+ABSL_ATTRIBUTE_ALWAYS_INLINE auto Compose(Combinators&&... combinators) {
+  return std::make_tuple(std::forward<Combinators>(combinators)...);
 }
 
 template <ProcessingStyle input_processing_style,
@@ -903,19 +886,10 @@ template <ProcessingStyle input_processing_style,
           template <typename...> typename Combinator,
           typename... CombinatorParameters, typename... Ts>
 auto MakeCombinator(Ts&&... ts) {
-  auto creator =
-      [tuple = std::make_tuple(std::forward<Ts>(ts)...)](auto type) mutable {
-        return std::apply(
-            [](auto&&... ts) {
-              return Combinator<TypeIdentityT<decltype(type)>,
-                                CombinatorParameters...>{
-                  std::forward<decltype(ts)>(ts)...};
-            },
-            std::move(tuple));
-      };
-  return internal_htls_range::CombinatorCreatorWrapper<
+  return internal_htls_range::CombinatorCreator<
       input_processing_style, output_processing_style,
-      std::decay_t<decltype(creator)>>{creator};
+      std::tuple<std::decay_t<Ts>...>, Combinator, CombinatorParameters...>(
+      std::forward<Ts>(ts)...);
 }
 
 inline auto ToVector() {
