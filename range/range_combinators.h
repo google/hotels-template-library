@@ -67,6 +67,23 @@ auto TransformComplete(F f);
 // Out: Complete
 inline auto ToVector();
 
+// Converts the output to a collection. The type of the collection is deduced.
+// This takes the collection as a template template parameter, followed by
+// additional type parameters that are passed to the template.
+// It takes arguments that will be passed to collection at construction.
+// In: Incremental
+// Out: Complete
+// Example:
+// inline auto ToSet() {
+//   return ToCollection<std::set>([](auto& set, auto&& value) {
+//     set.insert(std::forward<decltype(value)>(value));
+//   });
+// }
+
+template <template <typename...> typename Collection,
+          typename... CollectionParams, typename Appender, typename... Args>
+auto ToCollection(Appender appender, Args&&... args);
+
 // Sorts the output.
 // In: Complete
 // Out: Complete
@@ -157,24 +174,40 @@ auto AllOf(Predicate predicate);
 template <typename Predicate>
 auto NoneOf(Predicate predicate);
 
-
 namespace internal_htls_range {
 
-template <typename InputType>
-struct ToVectorImpl {
-  using OutputType = std::vector<std::decay_t<InputType>>&&;
+// Since CombinatorImpls have to take all type template parameters, we have to
+// wrap the collection template, in a type.
+template <template <typename...> typename Collection,
+          typename... CollectionParams>
+struct CollectionTemplate {
+  template <typename T>
+  using type = Collection<T, CollectionParams...>;
+};
 
-  std::vector<std::decay_t<InputType>> vector;
+// Implements converting incremental input to a generic collection.
+template <typename InputType, typename CollectionTemplateParam,
+          typename Appender>
+struct ToCollectionImpl {
+  using Collection =
+      typename CollectionTemplateParam::template type<std::decay_t<InputType>>;
+  using OutputType = Collection&&;
 
+  Collection collection;
+  Appender appender;
+  template <typename... Args>
+  explicit ToCollectionImpl(Appender appender, Args&&... args)
+      : appender(std::move(appender)),
+        collection(std::forward<Args>(args)...) {}
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&&) {
-    vector.push_back(static_cast<InputType>(input));
+    appender(collection, static_cast<InputType>(input));
   }
 
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
-    return next.ProcessComplete(std::move(vector));
+    return next.ProcessComplete(std::move(collection));
   }
 };
 
@@ -402,10 +435,24 @@ std::false_type HasRemoveSuffix(...);
 
 }  // namespace internal_htls_range
 
+template <template <typename...> typename Collection,
+          typename... CollectionParams, typename Appender, typename... Args>
+auto ToCollection(Appender appender, Args&&... args) {
+  return MakeCombinator<
+      ProcessingStyle::kIncremental, ProcessingStyle::kComplete,
+      internal_htls_range::ToCollectionImpl,
+      internal_htls_range::CollectionTemplate<Collection, CollectionParams...>,
+      Appender>(std::move(appender), std::forward<Args>(args)...);
+}
+
 inline auto ToVector() {
-  return MakeCombinator<ProcessingStyle::kIncremental,
-                        ProcessingStyle::kComplete,
-                        internal_htls_range::ToVectorImpl>();
+  // It is safe to pass std::vector as template-template parameter since
+  // implementators are not allowed to add additional template parameters.
+  // https://www.open-std.org/jtc1/sc22/wg21/docs/lwg-closed.html#94
+  return ToCollection<std::vector>(
+      [](auto& vector, auto&& value) {
+        vector.push_back(std::forward<decltype(value)>(value));
+      });
 }
 
 template <typename Predicate>

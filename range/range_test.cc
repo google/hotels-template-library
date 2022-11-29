@@ -19,6 +19,7 @@
 #include <initializer_list>
 #include <list>
 #include <numeric>
+#include <set>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -28,6 +29,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <absl/types/span.h>
+#include "range/range_combinators.h"
 
 namespace htls::range {
 
@@ -56,6 +58,18 @@ TEST(TestOutputCombinators, NoCombinators) {
 TEST(TestOutputCombinators, ToVector) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v, ToVector());
+  EXPECT_THAT(result, ElementsAre(1, 2, 3));
+}
+
+inline auto ToSet() {
+  return ToCollection<std::set>([](auto& set, auto&& value) {
+    set.insert(std::forward<decltype(value)>(value));
+  });
+}
+
+TEST(TestOutputCombinators, ToSet) {
+  std::vector<int> v{1, 3, 2, 1};
+  auto result = Apply(v, ToSet());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
 }
 
