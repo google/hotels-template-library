@@ -912,6 +912,12 @@ template <typename Container,
 std::true_type HasRemoveSuffix(Container&);
 
 std::false_type HasRemoveSuffix(...);
+
+std::false_type IsTuple(...);
+
+template <typename... Ts>
+std::true_type IsTuple(const std::tuple<Ts...>&);
+
 }  // namespace internal_htls_range
 
 template <typename Range, typename... Combinators>
@@ -921,16 +927,25 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
     return std::forward<Range>(range);
   } else {
     using InputType = decltype(std::forward<Range>(range));
-    auto chain = internal_htls_range::FlattenArgs(
-        [&](auto&&... combinators) mutable {
-          using Chain = internal_htls_range::CombinatorChain<
-              internal_htls_range::ChainTerminator, InputType,
-              std::decay_t<decltype(combinators)>...>;
-          return Chain{std::forward<decltype(combinators)>(combinators)...};
-        },
-        std::forward<Combinators>(combinators)...);
-    return chain.Get(internal_htls_range::Index<0>())
-        .ProcessComplete(std::forward<Range>(range));
+    auto make_chain = [&](auto&&... combinators) mutable {
+      using Chain = internal_htls_range::CombinatorChain<
+          internal_htls_range::ChainTerminator, InputType,
+          std::decay_t<decltype(combinators)>...>;
+      return Chain{std::forward<decltype(combinators)>(combinators)...};
+    };
+    // If there are no tuples, avoid call the FlattenArgs. See cl/490598090
+    // which has benchmarks that this makes a difference.
+    if constexpr ((decltype(internal_htls_range::IsTuple(combinators))::value ||
+                   ...)) {
+      auto chain = internal_htls_range::FlattenArgs(
+          make_chain, std::forward<Combinators>(combinators)...);
+      return chain.Get(internal_htls_range::Index<0>())
+          .ProcessComplete(std::forward<Range>(range));
+    } else {
+      auto chain = make_chain(std::forward<Combinators>(combinators)...);
+      return chain.Get(internal_htls_range::Index<0>())
+          .ProcessComplete(std::forward<Range>(range));
+    }
   }
 }
 
