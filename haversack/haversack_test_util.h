@@ -17,8 +17,8 @@
 
 #include <type_traits>
 
+#include "meta/basic_tuple.h"
 #include "haversack/haversack.h"
-#include "haversack/internal/basic_tuple.h"
 
 #ifndef HAVERSACK_GET_TESTER_MODE
 // If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
@@ -31,16 +31,19 @@ namespace hotels::haversack {
 namespace internal {
 
 struct FakeCompatibility {
-  static constexpr BasicTuple<> GetMatchChecks() { return BasicTuple<>(); }
+  static constexpr htls::meta::BasicTuple<> GetMatchChecks() {
+    return htls::meta::BasicTuple<>();
+  }
   static constexpr bool IsCompatible() { return true; }
 };
 
 // friend declaration requires this definition is in the internal namespace.
 struct HaversackTestUtil {
-  template <typename... HaversackTs, typename... Args,
-            typename = std::enable_if_t<
-                sizeof...(HaversackTs) != 0 &&
-                (... && internal::IsHaversack(types::type_c<HaversackTs>))>>
+  template <
+      typename... HaversackTs, typename... Args,
+      typename = std::enable_if_t<
+          sizeof...(HaversackTs) != 0 &&
+          (... && internal::IsHaversack(htls::meta::type_c<HaversackTs>))>>
   static auto MakeFakeHaversack(Args&&... args) {
 #if HAVERSACK_GET_TESTER_MODE == 1
     // If HAVERSACK_GET_TESTER_MODE is on mode 1, create a haversack that is all
@@ -49,39 +52,42 @@ struct HaversackTestUtil {
     // hashes to be asserted on.
     using ResultT = Haversack<Deps<HaversackTs>...>;
     return ResultT(internal::CtorSentinel(), FakeCompatibility(),
-                   typename decltype(TraitsOf(types::type_c<ResultT>)
+                   typename decltype(TraitsOf(htls::meta::type_c<ResultT>)
                                          .MemberTupleType())::type());
 #else
     // Haversack containing only the direct dependencies to HaversackT.
     constexpr auto direct_type_set =
-        (... | TraitsOf(types::type_c<HaversackTs>).direct);
+        (... | TraitsOf(htls::meta::type_c<HaversackTs>).direct);
     using RequiredTypesHaversack =
-        typename decltype(types::FromTuple<Haversack>(
+        typename decltype(htls::meta::FromTuple<Haversack>(
             direct_type_set.Tuple()))::type;
     auto direct_deps_haversack =
         RequiredTypesHaversack(std::forward<Args>(args)...);
 
     constexpr auto all_deps_type_set =
-        (... | TraitsOf(types::type_c<HaversackTs>).all_deps);
-    using AllTypesHaversack = typename decltype(types::FromTuple<Haversack>(
-        all_deps_type_set.Tuple()))::type;
+        (... | TraitsOf(htls::meta::type_c<HaversackTs>).all_deps);
+    using AllTypesHaversack =
+        typename decltype(htls::meta::FromTuple<Haversack>(
+            all_deps_type_set.Tuple()))::type;
     // Instance of AllTypesHaversack, initially only containing nullptrs.
     auto result = AllTypesHaversack(
         internal::CtorSentinel(), FakeCompatibility(),
-        typename decltype(TraitsOf(types::type_c<AllTypesHaversack>)
+        typename decltype(TraitsOf(htls::meta::type_c<AllTypesHaversack>)
                               .MemberTupleType())::type());
 
     // Copy direct dependencies over from direct_deps_haversack into result.
-    Apply(
+    htls::meta::Apply(
         // Capture by pointer because Apply does not support mutable invocables.
         [result_ptr = &result,
          direct_ptr = &direct_deps_haversack](auto... types) {
-          ((get<typename decltype(types)::type>(*result_ptr->members_) =
-                std::move(get<typename decltype(types)::type>(
+          ((std::get<typename decltype(types)::type>(
+                *result_ptr->members_) =
+                std::move(std::get<typename decltype(types)::type>(
                     *direct_ptr->members_))),
            ...);
         },
-        types::AsTuple(types::Type(*direct_deps_haversack.members_)));
+        htls::meta::AsTuple(
+            htls::meta::Type(*direct_deps_haversack.members_)));
     return result;
 #endif
   }
@@ -100,8 +106,8 @@ struct HaversackTestUtil {
 // only needed in that subgraph of the call chain don't need to be instaniated
 // in testing.
 //
-// Multiple Haversack types can be specified which allows some Haversack
-// propagation as long as there is a hierarchy between the types.
+// Multiple Haversack htls::meta can be specified which allows some Haversack
+// propagation as long as there is a hierarchy between the htls::meta.
 template <typename... HaversackTs, typename... Args>
 auto MakeFakeHaversack(Args&&... args) {
   return internal::HaversackTestUtil::MakeFakeHaversack<HaversackTs...>(

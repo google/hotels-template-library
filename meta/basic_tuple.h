@@ -17,9 +17,7 @@
 
 #include <utility>
 
-#include "haversack/internal/util.h"
-
-namespace hotels::haversack::internal {
+namespace htls::meta {
 
 template <typename...>
 struct BasicTuple;
@@ -84,10 +82,15 @@ constexpr const T&& get(const internal_basic_tuple::IndexedType<Index, T>&& h) {
   return std::move(h).value;
 }
 
+template <typename>
+struct IsBasicTupleImpl : std::false_type {};
+template <typename...Ts>
+struct IsBasicTupleImpl<BasicTuple<Ts...>> : std::true_type {};
+
 // True if T is a BasicTuple.
 template <typename T>
 constexpr bool IsBasicTuple =
-    is_template_instance_v<std::decay_t<T>, BasicTuple>;
+    IsBasicTupleImpl<std::decay_t<T>>::value;
 
 template <std::size_t... a_indexes, std::size_t... b_indexes, typename A,
           typename B>
@@ -305,6 +308,6 @@ constexpr bool AnyOf(const F& f, T&& t) {
   return internal_basic_tuple::AnyOfImpl(f, std::forward<T>(t), t.Indexes());
 }
 
-}  // namespace hotels::haversack::internal
+}  // namespace htls::meta
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_BASIC_TUPLE_H_

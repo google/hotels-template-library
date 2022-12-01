@@ -12,23 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "haversack/internal/basic_tuple.h"
+#include "meta/basic_tuple.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
-#include "haversack/internal/type.h"
+#include "meta/type.h"
 
-namespace hotels::haversack::internal {
+namespace htls::meta {
 namespace {
 
 struct A {};
 struct B {};
 struct C {};
 struct D {};
-constexpr types::Type<A> a{};
-constexpr types::Type<B> b{};
-constexpr types::Type<C> c{};
-constexpr types::Type<D> d{};
+constexpr Type<A> a{};
+constexpr Type<B> b{};
+constexpr Type<C> c{};
+constexpr Type<D> d{};
 
 static_assert(Concat() == MakeBasicTuple());
 static_assert(Concat(MakeBasicTuple(a, b)) == MakeBasicTuple(a, b));
@@ -38,7 +38,7 @@ static_assert(Flatten(MakeBasicTuple(MakeBasicTuple(a, b),
                                      MakeBasicTuple(c, d))) ==
               MakeBasicTuple(a, b, c, d));
 static_assert(MakeBasicTuple(MakeBasicTuple(a)) ==
-              BasicTuple<BasicTuple<types::Type<A>>>());
+              BasicTuple<BasicTuple<Type<A>>>());
 
 static_assert(Apply([](auto... ts) { return (... * ts); },
                     MakeBasicTuple(1, 2, 3)) == 6);
@@ -46,7 +46,7 @@ static_assert(Apply([](auto... ts) { return (... * ts); },
 template <typename... Ts>
 struct Matches {
   template <typename T>
-  constexpr bool operator()(types::Type<T> t) const {
+  constexpr bool operator()(Type<T> t) const {
     return (... || std::is_same_v<T, Ts>);
   }
 };
@@ -101,4 +101,4 @@ TEST(BasicTuple, Comparable) {
 }
 
 }  // namespace
-}  // namespace hotels::haversack::internal
+}  // namespace htls::meta

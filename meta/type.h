@@ -15,13 +15,14 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_H_
 
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
-#include "haversack/internal/basic_tuple.h"
+#include "meta/basic_tuple.h"
 
-namespace hotels::haversack::internal::types {
+namespace htls::meta {
 namespace internal_type {
 
 template <typename T, typename F, typename = void>
@@ -29,6 +30,29 @@ struct IsValidExprImpl : std::false_type {};
 template <typename T, typename F>
 struct IsValidExprImpl<T, F, std::void_t<std::invoke_result_t<F, T>>>
     : std::true_type {};
+
+template <typename T>
+constexpr std::string_view GetRawTypeName() {
+  return __PRETTY_FUNCTION__;
+}
+
+inline constexpr std::string_view long_double_raw_type_name =
+    GetRawTypeName<long double>();
+inline constexpr std::string_view long_double_type_name = "long double";
+inline constexpr std::size_t type_name_prefix =
+    long_double_raw_type_name.find(long_double_type_name);
+static_assert(type_name_prefix != std::string_view::npos);
+inline constexpr std::size_t type_name_suffix =
+    long_double_raw_type_name.size() -
+    (type_name_prefix + long_double_type_name.size());
+
+template <typename T>
+constexpr std::string_view GetDebugTypeName() {
+  std::string_view raw_name = GetRawTypeName<T>();
+  raw_name.remove_prefix(type_name_prefix);
+  raw_name.remove_suffix(type_name_suffix);
+  return raw_name;
+}
 
 }  // namespace internal_type
 //
@@ -96,13 +120,13 @@ constexpr decltype(auto) ValidExprOr(T&& t, F&& f, U&& u) {
 // class template.
 template <template <typename...> typename T, typename... Ts>
 constexpr auto AsTuple(Type<T<Ts...>>) {
-  return BasicTuple<Type<Ts>...>();
+  return htls::meta::BasicTuple<Type<Ts>...>();
 }
 
 // Makes a Type of a class template instance using the types from a
 // BasicTuple of Types.
 template <template <typename...> typename T, typename... Ts>
-constexpr auto FromTuple(BasicTuple<Type<Ts>...>) {
+constexpr auto FromTuple(htls::meta::BasicTuple<Type<Ts>...>) {
   return Type<T<Ts...>>();
 }
 
@@ -133,10 +157,33 @@ struct MetaTypeFunction {
 
 // Get the size of a BasicTuple type.
 template <typename... Ts>
-constexpr std::size_t size(Type<BasicTuple<Ts...>>) {
+constexpr std::size_t size(Type<htls::meta::BasicTuple<Ts...>>) {
   return sizeof...(Ts);
 }
 
-}  // namespace hotels::haversack::internal::types
+// Get the debug string name of a type T.
+//   DebugTypName(type_c<int>) == "int"
+template <typename T>
+constexpr std::string_view DebugTypeName(Type<T>) {
+  return internal_type::GetDebugTypeName<T>();
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Check if the function argument is a template instance of the template
+// argument; e.g.
+//   IsTemplateInstance<std::optional>(type_c<std::optional<int>>) == true
+////////////////////////////////////////////////////////////////////////////////
+template <typename, template <class...> class>
+struct is_template_instance : public std::false_type {};
+
+template <typename... Ts, template <class...> class T>
+struct is_template_instance<T<Ts...>, T> : public std::true_type {};
+
+template <template <class...> class T, typename U>
+constexpr bool IsTemplateInstance(Type<U>) {
+  return is_template_instance<U, T>::value;
+}
+
+}  // namespace htls::meta
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_H_

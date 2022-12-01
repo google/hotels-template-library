@@ -48,10 +48,10 @@
 #include <tuple>
 #include <type_traits>
 
-#include "haversack/internal/basic_tuple.h"
-#include "haversack/internal/type.h"
-#include "haversack/internal/type_set.h"
-#include "haversack/internal/util.h"
+#include "meta/basic_tuple.h"
+#include "meta/function_traits.h"
+#include "meta/type.h"
+#include "meta/type_set.h"
 
 namespace hotels::haversack {
 
@@ -75,6 +75,38 @@ template <typename, typename>
 struct Tagged;
 
 namespace internal {
+namespace internal_assert_is {
+
+enum class Placeholder : int;
+
+template <std::size_t N, std::size_t M, typename Compare,
+          typename... ContextPtrs>
+constexpr void assert_is_impl(Compare cmp, ContextPtrs*...) {
+  static_assert(cmp(N, M));
+}
+
+template <std::size_t N, std::size_t M, typename Context,
+          typename... ContextRest, typename Compare, typename... ContextPtrs>
+constexpr void assert_is_helper(Compare cmp, ContextPtrs*... context_ptrs) {
+  if constexpr (sizeof...(ContextRest) == 0) {
+    assert_is_impl<N, M>(cmp, context_ptrs..., static_cast<Context*>(nullptr),
+                         static_cast<Placeholder*>(nullptr));
+  } else {
+    assert_is_helper<N, M, ContextRest...>(cmp, context_ptrs...,
+                                           static_cast<Context*>(nullptr),
+                                           static_cast<Placeholder*>(nullptr));
+  }
+}
+
+}  // namespace internal_assert_is
+
+// Perform a static_assert on N and M using cmp. The list of Context types will
+// be interleaved with Placeholder for easy parsing.
+template <std::size_t N, std::size_t M, typename... Context, typename Compare>
+constexpr void assert_is(Compare cmp) {
+  internal_assert_is::assert_is_helper<N, M, Context...>(
+      cmp, static_cast<internal_assert_is::Placeholder*>(nullptr));
+}
 
 template <typename T>
 using SharedProxy = std::shared_ptr<T>;
@@ -90,14 +122,14 @@ enum class WrappingMetadataOrder {
 
 template <typename Tag>
 struct WrappedTypeMetadata {
-  types::Type<Tag> tag;
+  htls::meta::Type<Tag> tag;
   bool nullable = false;
   bool known_thread_safe = false;
   WrappingMetadataOrder order = WrappingMetadataOrder::kEnd;
 
   template <typename T, typename NewTag>
   constexpr WrappedTypeMetadata<NewTag> SetTag(
-      types::Type<Tagged<T, NewTag>>) const {
+      htls::meta::Type<Tagged<T, NewTag>>) const {
     WrappedTypeMetadata<NewTag> result;
     result.nullable = nullable;
     result.known_thread_safe = known_thread_safe;
@@ -125,22 +157,25 @@ struct WrappedTypeMetadata {
 // wrappers.
 class UnwrapTypeWrappersFunctor {
   template <typename WrappedType>
-  static constexpr auto Impl(types::Type<WrappedType> t) {
-    constexpr types::MetaTypeFunction<std::add_const> add_const;
-    constexpr types::MetaTypeFunction<std::remove_const> remove_const;
-    if constexpr (is_template_instance_v<WrappedType, KnownThreadSafe>) {
-      auto [result, metadata] = Impl(get<0>(types::AsTuple(t)));
+  static constexpr auto Impl(htls::meta::Type<WrappedType> t) {
+    constexpr htls::meta::MetaTypeFunction<std::add_const> add_const;
+    constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
+    if constexpr (htls::meta::IsTemplateInstance<KnownThreadSafe>(t)) {
+      auto [result, metadata] =
+          Impl(htls::meta::get<0>(htls::meta::AsTuple(t)));
       metadata.known_thread_safe = true;
       return std::make_pair(
           remove_const(result),
           metadata.SetOrder(WrappingMetadataOrder::kKnownThreadSafe));
-    } else if constexpr (is_template_instance_v<WrappedType, Nullable>) {
-      auto [result, metadata] = Impl(get<0>(types::AsTuple(t)));
+    } else if constexpr (htls::meta::IsTemplateInstance<Nullable>(t)) {
+      auto [result, metadata] =
+          Impl(htls::meta::get<0>(htls::meta::AsTuple(t)));
       metadata.nullable = true;
       return std::make_pair(
           result, metadata.SetOrder(WrappingMetadataOrder::kNullable));
-    } else if constexpr (is_template_instance_v<WrappedType, Tagged>) {
-      auto [result, metadata] = Impl(get<0>(types::AsTuple(t)));
+    } else if constexpr (htls::meta::IsTemplateInstance<Tagged>(t)) {
+      auto [result, metadata] =
+          Impl(htls::meta::get<0>(htls::meta::AsTuple(t)));
       return std::make_pair(
           result, metadata.SetTag(t).SetOrder(WrappingMetadataOrder::kTag));
     } else {
@@ -157,8 +192,8 @@ class UnwrapTypeWrappersFunctor {
 
  public:
   template <typename WrappedType>
-  constexpr auto operator()(types::Type<WrappedType> t) const {
-    constexpr std::pair pair = Impl(types::type_c<WrappedType>);
+  constexpr auto operator()(htls::meta::Type<WrappedType> t) const {
+    constexpr std::pair pair = Impl(htls::meta::type_c<WrappedType>);
     constexpr WrappedTypeMetadata metadata = pair.second;
     static_assert(metadata.order != WrappingMetadataOrder::kOutOfOrder,
                   "See internal::WrappingMetadataOrder for more information "
@@ -166,40 +201,40 @@ class UnwrapTypeWrappersFunctor {
     return pair.first;
   }
   template <typename WrappedType>
-  constexpr auto GetMetadata(types::Type<WrappedType> t) const {
+  constexpr auto GetMetadata(htls::meta::Type<WrappedType> t) const {
     return Impl(t).second;
   }
 };
 inline constexpr UnwrapTypeWrappersFunctor kUnwrapTypeWrappers;
 template <typename WrappedType>
-constexpr bool IsTagged(types::Type<WrappedType> t) {
-  return kUnwrapTypeWrappers.GetMetadata(t).tag != types::type_c<void>;
+constexpr bool IsTagged(htls::meta::Type<WrappedType> t) {
+  return kUnwrapTypeWrappers.GetMetadata(t).tag != htls::meta::type_c<void>;
 }
 template <typename WrappedType>
-constexpr auto GetTag(types::Type<WrappedType> t) {
+constexpr auto GetTag(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).tag;
 }
 template <typename WrappedType>
-constexpr bool IsNullable(types::Type<WrappedType> t) {
+constexpr bool IsNullable(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).nullable;
 }
 template <typename WrappedType>
-constexpr bool IsKnownThreadSafe(types::Type<WrappedType> t) {
+constexpr bool IsKnownThreadSafe(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).known_thread_safe;
 }
 template <typename CtorArg>
-constexpr auto GetDisplayableCtorArgType(types::Type<CtorArg> t) {
-  if constexpr (t == types::type_c<std::nullptr_t>) {
-    return types::type_c<void>;
+constexpr auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
+  if constexpr (t == htls::meta::type_c<std::nullptr_t>) {
+    return htls::meta::type_c<void>;
   } else if constexpr (IsTagged(t)) {
     return t;
   } else {
-    return types::type_c<typename CtorArg::element_type>;
+    return htls::meta::type_c<typename CtorArg::element_type>;
   }
 }
 template <typename CtorArg>
-constexpr auto DeduceWrappedTypeFromCtorArg(types::Type<CtorArg> t) {
-  constexpr types::MetaTypeFunction<std::remove_const> remove_const;
+constexpr auto DeduceWrappedTypeFromCtorArg(htls::meta::Type<CtorArg> t) {
+  constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
   return remove_const(GetDisplayableCtorArgType(t));
 }
 
@@ -214,7 +249,7 @@ struct Holder {
   using type = WrappedType;
 
   SharedProxy<typename decltype(kUnwrapTypeWrappers(
-      types::type_c<WrappedType>))::type>
+      htls::meta::type_c<WrappedType>))::type>
       value;
 };
 
@@ -226,9 +261,9 @@ struct CtorSentinel {};
 
 // Access the private traits of the Haversack.
 template <typename... Ts>
-constexpr auto TraitsOf(types::Type<Haversack<Ts...>>);
+constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>);
 template <typename HaversackT>
-constexpr auto TraitsOf(types::Type<HaversackT> t);
+constexpr auto TraitsOf(htls::meta::Type<HaversackT> t);
 
 template <typename SourceDisplayableCtorArg, typename... TargetWrappedTypes>
 struct SourceMatches {
@@ -284,8 +319,9 @@ struct TargetMatches {
 // kFindMatches is a constexpr memoization cache for FindMatchesImpl to avoid
 // maximum step limit compilation errors.
 template <typename TargetWrappedTypes, typename SourceCtorArg>
-constexpr auto FindMatchesImpl(types::Type<SourceCtorArg> source_ctor_arg) {
-  constexpr types::MetaValueFunction<std::is_convertible> is_convertible;
+constexpr auto FindMatchesImpl(
+    htls::meta::Type<SourceCtorArg> source_ctor_arg) {
+  constexpr htls::meta::MetaValueFunction<std::is_convertible> is_convertible;
   return Filter(
       [=](auto wrapped_target) {
         if constexpr (IsTagged(source_ctor_arg)) {
@@ -302,9 +338,10 @@ constexpr auto FindMatchesImpl(types::Type<SourceCtorArg> source_ctor_arg) {
           }
         } else {
           constexpr auto shared_proxy_of = [](auto t) {
-            return types::FromTuple<SharedProxy>(MakeBasicTuple(t));
+            return htls::meta::FromTuple<SharedProxy>(
+                htls::meta::MakeBasicTuple(t));
           };
-          constexpr types::Type target_shared_proxy =
+          constexpr htls::meta::Type target_shared_proxy =
               shared_proxy_of(kUnwrapTypeWrappers(wrapped_target));
           return is_convertible(source_ctor_arg, target_shared_proxy);
         }
@@ -312,25 +349,27 @@ constexpr auto FindMatchesImpl(types::Type<SourceCtorArg> source_ctor_arg) {
       TargetWrappedTypes());
 }
 template <typename TargetWrappedTypes, typename SourceCtorArg>
-constexpr BasicTuple kFindMatches =
-    FindMatchesImpl<TargetWrappedTypes>(types::type_c<SourceCtorArg>);
+constexpr htls::meta::BasicTuple kFindMatches =
+    FindMatchesImpl<TargetWrappedTypes>(htls::meta::type_c<SourceCtorArg>);
 
 // kGetMatchChecks is a constexpr memoization cache for GetMatchChecksImpl to
 // avoid maximum step limit compilation errors.
 template <typename CompatibleArgsInstance>
 constexpr auto GetMatchChecksImpl() {
-  BasicTuple all_source_matches =
+  htls::meta::BasicTuple all_source_matches =
       CompatibleArgsInstance::FindAllSourceMatches();
-  BasicTuple source_checks = Transform(
+  htls::meta::BasicTuple source_checks = Transform(
       [=](auto t) {
-        return types::FromTuple<SourceMatches>(
-            MakeBasicTuple(GetDisplayableCtorArgType(get<0>(t))) + get<1>(t));
+        return htls::meta::FromTuple<SourceMatches>(
+            htls::meta::MakeBasicTuple(
+                GetDisplayableCtorArgType(htls::meta::get<0>(t))) +
+            htls::meta::get<1>(t));
       },
       all_source_matches);
-  BasicTuple target_checks = Transform(
+  htls::meta::BasicTuple target_checks = Transform(
       [=](auto t) {
-        return types::FromTuple<TargetMatches>(
-            MakeBasicTuple(t) +
+        return htls::meta::FromTuple<TargetMatches>(
+            htls::meta::MakeBasicTuple(t) +
             Transform([](auto u) { return GetDisplayableCtorArgType(u); },
                       CompatibleArgsInstance::FindTargetMatches(
                           t, all_source_matches)));
@@ -339,24 +378,25 @@ constexpr auto GetMatchChecksImpl() {
   return source_checks + target_checks;
 }
 template <typename CompatibleArgsInstance>
-constexpr BasicTuple kGetMatchChecks =
+constexpr htls::meta::BasicTuple kGetMatchChecks =
     GetMatchChecksImpl<CompatibleArgsInstance>();
 
 // ConvertOne<TargetWrappedType> has an operator() to convert any valid CtorArg
 // to a Holder<TargetWrappedType>.
 template <typename TargetWrappedType,
           typename TargetUnwrappedType = typename decltype(kUnwrapTypeWrappers(
-              types::type_c<TargetWrappedType>))::type>
+              htls::meta::type_c<TargetWrappedType>))::type>
 struct ConvertOne {
   // Returns the appropriate Holder if a conversion is possible, otherwise void.
   template <typename U>
   constexpr static auto Impl(U u) {
-    if constexpr (is_template_instance_v<U, std::shared_ptr> &&
+    if constexpr (htls::meta::IsTemplateInstance<std::shared_ptr>(
+                      htls::meta::type_c<U>) &&
                   std::is_convertible_v<U, SharedProxy<TargetUnwrappedType>>) {
       return Holder<TargetWrappedType>{std::move(u)};
-    } else if constexpr (IsTagged(types::type_c<TargetWrappedType>)) {
-      if constexpr (GetTag(types::type_c<U>) ==
-                    GetTag(types::type_c<TargetWrappedType>)) {
+    } else if constexpr (IsTagged(htls::meta::type_c<TargetWrappedType>)) {
+      if constexpr (GetTag(htls::meta::type_c<U>) ==
+                    GetTag(htls::meta::type_c<TargetWrappedType>)) {
         return Holder<TargetWrappedType>{std::move(u.tagged)};
       }
     }
@@ -365,11 +405,12 @@ struct ConvertOne {
                             decltype(Impl(std::declval<U&&>())), void>>>
   constexpr Holder<TargetWrappedType> operator()(U u) const {
     Holder holder = Impl(std::move(u));
-    if constexpr (!IsNullable(types::type_c<TargetWrappedType>)) {
+    if constexpr (!IsNullable(htls::meta::type_c<TargetWrappedType>)) {
       if (!holder.value) {
-        std::cerr
-            << "Pointers should never be null in haversack, but a "
-            << internal::debug_type_name_v<TargetUnwrappedType*> << " was null";
+        std::cerr << "Pointers should never be null in haversack, but a "
+                  << htls::meta::DebugTypeName(
+                         htls::meta::type_c<TargetUnwrappedType*>)
+                  << " was null";
         assert(holder.value);
         abort();
       }
@@ -390,10 +431,12 @@ struct Converter : ConvertOne<TargetWrappedTypes>... {
 // Determine if and how the types in SourceCtorArgs can be uniquely converted to
 // the types in TargetWrappedTypes.
 //
-// - SourceCtorArgs is a BasicTuple of CtorArg Type instances which represents
+// - SourceCtorArgs is a htls::meta::BasicTuple of CtorArg Type instances which
+// represents
 //   the types of the arguments actually provided.
 //
-// - TargetWrappedTypes is a BasicTuple of Type types which represents the types
+// - TargetWrappedTypes is a htls::meta::BasicTuple of Type types which
+// represents the types
 //   of the parameters expected to a certain invokable.
 template <typename SourceCtorArgs, typename TargetWrappedTypes_>
 class CompatibleArgs {
@@ -403,54 +446,55 @@ class CompatibleArgs {
   // implicitly converted to. If SourceCtorArg cannot be converted to anything
   // or more than one thing, returns Type<void> instead.
   template <typename SourceCtorArg>
-  static constexpr auto FindMatch(types::Type<SourceCtorArg> source) {
-    BasicTuple matches = FindMatches(source);
+  static constexpr auto FindMatch(htls::meta::Type<SourceCtorArg> source) {
+    htls::meta::BasicTuple matches = FindMatches(source);
     if constexpr (size(matches) == 1) {
-      return get<0>(matches);
+      return htls::meta::get<0>(matches);
     } else {
-      return types::type_c<void>;
+      return htls::meta::type_c<void>;
     }
   }
 
   // Find all the TargetWrappedTypes that source can be converted to, as a
-  // BasicTuple of Types.
+  // htls::meta::BasicTuple of Types.
   template <typename SourceCtorArg>
-  static constexpr auto FindMatches(types::Type<SourceCtorArg> source) {
+  static constexpr auto FindMatches(htls::meta::Type<SourceCtorArg> source) {
     return kFindMatches<TargetWrappedTypes, SourceCtorArg>;
   }
   // Find all the matching TargetWrappedTypes for each SourceCtorArg match as a
-  // BasicTuple of BasicTuples in the form:
-  //  BasicTuple<
-  //    BasicTuple<
+  // htls::meta::BasicTuple of BasicTuples in the form:
+  //  htls::meta::BasicTuple<
+  //    htls::meta::BasicTuple<
   //      FirstSourceCtorArg,
-  //      BasicTuple<FirstMatchingTargetWrappedTypes...>>,
-  //    BasicTuple<
+  //      htls::meta::BasicTuple<FirstMatchingTargetWrappedTypes...>>,
+  //    htls::meta::BasicTuple<
   //      SecoundSourceCtorArg,
-  //      BasicTuple<SecondMatchingTargetWrappedTypes...>>,
+  //      htls::meta::BasicTuple<SecondMatchingTargetWrappedTypes...>>,
   //    ...>
   static constexpr auto FindAllSourceMatches() {
-    return Transform([](auto t) { return MakeBasicTuple(t, FindMatches(t)); },
-                     SourceCtorArgs());
+    return Transform(
+        [](auto t) { return htls::meta::MakeBasicTuple(t, FindMatches(t)); },
+        SourceCtorArgs());
   }
   // Find all the SourceCtorArgs that can be converted to a given
   // WrappedTargetType. all_source_matches is of the form returned by
   // FindAllSourceMatches.
   template <typename TargetWrappedType, typename... AllSourceMatches>
   static constexpr auto FindTargetMatches(
-      types::Type<TargetWrappedType> target,
-      BasicTuple<AllSourceMatches...> all_source_matches) {
+      htls::meta::Type<TargetWrappedType> target,
+      htls::meta::BasicTuple<AllSourceMatches...> all_source_matches) {
     return Transform(
-        [](auto source_matches) { return get<0>(source_matches); },
+        [](auto source_matches) { return htls::meta::get<0>(source_matches); },
         Filter(
             [=](auto source_matches) constexpr {
-              return types::Contains(
+              return htls::meta::Contains(
                   target,
                   Apply(
                       [](auto... matching_wrapped_target_types) constexpr {
-                        return types::MakePrevalidatedTypeSet(
+                        return htls::meta::MakePrevalidatedTypeSet(
                             matching_wrapped_target_types...);
                       },
-                      get<1>(source_matches)));
+                      htls::meta::get<1>(source_matches)));
             },
             all_source_matches));
   }
@@ -464,11 +508,11 @@ class CompatibleArgs {
     // - They are the same size (the size comparison) and
     // - Each SourceCtorArgs has a one-to-one mapping in TargetWrappedTypes (all
     // of the conversions with converter are valid).
-    return size(types::type_c<SourceCtorArgs>) ==
-               size(types::type_c<TargetWrappedTypes>) &&
+    return size(htls::meta::type_c<SourceCtorArgs>) ==
+               size(htls::meta::type_c<TargetWrappedTypes>) &&
            AllOf(
                [](auto t) {
-                 return types::IsValidExpr(
+                 return htls::meta::IsValidExpr(
                      t,
                      [](auto u)
                          -> decltype(converter_(
@@ -488,15 +532,15 @@ class CompatibleArgs {
     }
   }
 
-  // Returns a BasicTuple of SourceMatches for each source and TargetMatches for
-  // each target.
+  // Returns a htls::meta::BasicTuple of SourceMatches for each source and
+  // TargetMatches for each target.
   constexpr auto GetMatchChecks() const {
     constexpr CompatibleArgs self{SourceCtorArgs(), TargetWrappedTypes()};
     // If it is compatible, then there are no failing match checks.
     // kGetMatchChecks is very expensive so we want to avoid evaluating it if we
     // know that it will return nothing.
     if constexpr (self.QuickTest()) {
-      return MakeBasicTuple();
+      return htls::meta::MakeBasicTuple();
     } else {
       return kGetMatchChecks<CompatibleArgs>;
     }
@@ -509,7 +553,7 @@ class CompatibleArgs {
     return converter_(std::move(arg));
   }
 
-  typename decltype(types::FromTuple<Converter>(
+  typename decltype(htls::meta::FromTuple<Converter>(
       TargetWrappedTypes()))::type converter_;
 };
 template <typename SourceCtorArgs, typename TargetWrappedTypes>
@@ -518,12 +562,13 @@ CompatibleArgs(SourceCtorArgs, TargetWrappedTypes)
 
 // True if T is an instance of Haversack or a Haversack subclass.
 template <typename T>
-constexpr auto IsHaversack(types::Type<T> t) {
-  if constexpr (types::IsValidExpr(t,
-                                   [](auto u) ->
-                                   typename decltype(u)::type::HaversackT {})) {
+constexpr auto IsHaversack(htls::meta::Type<T> t) {
+  if constexpr (htls::meta::IsValidExpr(
+                    t,
+                    [](auto u) -> typename decltype(u)::type::HaversackT {})) {
     return std::is_base_of_v<typename T::HaversackT, T> &&
-           is_template_instance_v<typename T::HaversackT, Haversack>;
+           htls::meta::IsTemplateInstance<Haversack>(
+               htls::meta::type_c<typename T::HaversackT>);
   } else {
     return false;
   }
@@ -537,7 +582,7 @@ constexpr bool FirstIsHaversack() {
   } else {
     return [](auto first, auto... rest) {
       return IsHaversack(first);
-    }(types::type_c<Ts>...);
+    }(htls::meta::type_c<Ts>...);
   }
 }
 
@@ -547,7 +592,7 @@ constexpr bool FirstIsHaversack() {
 // Each Ts must be a Haversack type and all the types in those haversacks are
 // flattened into the result of Value.
 template <typename... Ts>
-constexpr auto GetTypesFromDeps(types::Type<Deps<Ts...>>) {
+constexpr auto GetTypesFromDeps(htls::meta::Type<Deps<Ts...>>) {
   auto get_arguments_that_are_haversacks = [](auto t) {
     static_assert(IsHaversack(t), "All types in Deps must be Haversacks.");
     if constexpr (IsHaversack(t)) {
@@ -555,10 +600,10 @@ constexpr auto GetTypesFromDeps(types::Type<Deps<Ts...>>) {
     } else {
       // Non-runtime reachable fallthrough case to avoid further compilation
       // errors other than the above static_assert.
-      return BasicTuple<>();
+      return htls::meta::BasicTuple<>();
     }
   };
-  return Concat(get_arguments_that_are_haversacks(types::type_c<Ts>)...);
+  return Concat(get_arguments_that_are_haversacks(htls::meta::type_c<Ts>)...);
 }
 
 // is_template_instance only works when all template parameters are types, so
@@ -571,20 +616,20 @@ struct CallsBase {};
 // Each Funcs must be an invocable, and any parameters to each Funcs that are
 // Haversack instances have their contained types flattened into the result.
 template <typename CallsInstance>
-constexpr auto GetTypesFromCalls(types::Type<CallsInstance>) {
+constexpr auto GetTypesFromCalls(htls::meta::Type<CallsInstance>) {
   auto get_arguments_that_are_haversacks = [](auto t) {
     using FuncT = std::remove_const_t<
         std::remove_reference_t<typename decltype(t)::type>>;
-    BasicTuple args =
-        types::AsTuple(types::type_c<typename function_traits<FuncT>::args>);
+    htls::meta::BasicTuple args = htls::meta::AsTuple(
+        htls::meta::type_c<typename htls::meta::function_traits<FuncT>::args>);
     return Filter([](auto arg) { return IsHaversack(arg); },
-                  Transform(types::MetaTypeFunction<std::decay>(), args));
+                  Transform(htls::meta::MetaTypeFunction<std::decay>(), args));
   };
-  // For each function in Funcs, get all of its arguments that are Haversacks
-  // as a BasicTuple. Concatenate each Funcs result into one BasicTuple of
-  // Haversacks then create a Deps from those types and use its Haversack
-  // flattening logic.
-  return GetTypesFromDeps(types::FromTuple<Deps>(Flatten(Transform(
+  // For each function in Funcs, htls::meta::get all of its arguments that are
+  // Haversacks as a htls::meta::BasicTuple. Concatenate each Funcs result into
+  // one htls::meta::BasicTuple of Haversacks then create a Deps from those
+  // types and use its Haversack flattening logic.
+  return GetTypesFromDeps(htls::meta::FromTuple<Deps>(Flatten(Transform(
       get_arguments_that_are_haversacks, typename CallsInstance::types()))));
 }
 
@@ -592,8 +637,9 @@ constexpr auto GetTypesFromCalls(types::Type<CallsInstance>) {
 // Haversack ctor directly as arguments and not inherited from another Haversack
 // instance.
 template <typename... WrappedTypes>
-constexpr auto GetTypesFromProvides(types::Type<Provides<WrappedTypes...>>) {
-  return MakeBasicTuple(types::type_c<WrappedTypes>...);
+constexpr auto GetTypesFromProvides(
+    htls::meta::Type<Provides<WrappedTypes...>>) {
+  return htls::meta::MakeBasicTuple(htls::meta::type_c<WrappedTypes>...);
 }
 
 // Holds the different sets of types, organized into different categories.
@@ -607,7 +653,7 @@ constexpr auto GetTypesFromProvides(types::Type<Provides<WrappedTypes...>>) {
 // checks in HaversackTraitsBuilder passed. This lets us skip later checks if we
 // already have failures to avoid exploding the error output. Failing a
 // static_assert does not stop compilation automatically so we explicitly skip
-// the rest of the validation if we get any failures.
+// the rest of the validation if we htls::meta::get any failures.
 // - All the types in the sets are WrappedTypes.
 template <typename DirectDepsT, typename AllDepsT, typename BuilderSuccessT>
 struct HaversackTraits {
@@ -620,7 +666,7 @@ struct HaversackTraits {
     if constexpr (BuilderSuccessT::value) {
       return compatibility.GetMatchChecks();
     } else {
-      return BasicTuple<>();
+      return htls::meta::BasicTuple<>();
     }
   }
 
@@ -630,17 +676,19 @@ struct HaversackTraits {
   //
   // - propagated_set is the TypeSet of types contained in the "other" haversack
   // being passed to this one. Empty set if there is no "other" haversack.
-  // - added is the BasicTuple of Types of arguments being directly passed into
-  // this haversack.  It is empty when converting from one haversack directly to
-  // another.
+  // - added is the htls::meta::BasicTuple of Types of arguments being directly
+  // passed into this haversack.  It is empty when converting from one haversack
+  // directly to another.
   template <typename Propagated, typename Added>
   constexpr auto CtorCompatibility(Propagated propagated_set, Added added) {
     return CompatibleArgs(added, (all_deps - propagated_set).Tuple());
   }
 
   constexpr auto MemberTupleType() const {
-    return types::FromTuple<std::tuple>(Transform(
-        [](auto t) { return types::FromTuple<Holder>(MakeBasicTuple(t)); },
+    return htls::meta::FromTuple<std::tuple>(Transform(
+        [](auto t) {
+          return htls::meta::FromTuple<Holder>(htls::meta::MakeBasicTuple(t));
+        },
         all_deps.Tuple()));
   }
   constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps,
@@ -653,14 +701,15 @@ HaversackTraits(DirectDepsT, AllDepsT, BuilderSuccessT)
 
 // Holds the different sets of types, organized into different categories.
 //
-// - DirectDepsT is a BasicTuple of WrappedType Types which represents all the
-// types which are direct dependencies that have been added to the builder so
-// far.
-// - IndirectDepsT is a BasicTuple of WrappedType Types which represents all the
-// types which are indirect dependencies that have been added to the builder so
-// far.
-// - ProvidesT is a BasicTuple of WrappedType Types which represents all the
-// types which are "provided" which have been added to the builder so far.
+// - DirectDepsT is a htls::meta::BasicTuple of WrappedType Types which
+// represents all the types which are direct dependencies that have been added
+// to the builder so far.
+// - IndirectDepsT is a htls::meta::BasicTuple of WrappedType Types which
+// represents all the types which are indirect dependencies that have been added
+// to the builder so far.
+// - ProvidesT is a htls::meta::BasicTuple of WrappedType Types which
+// represents all the types which are "provided" which have been added to the
+// builder so far.
 template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT>
 struct HaversackTraitsBuilder {
   DirectDepsT direct;
@@ -673,14 +722,14 @@ struct HaversackTraitsBuilder {
   }
   template <typename WrappedTypes>
   constexpr auto ExtendIndirectDeps(WrappedTypes t) const {
-    static_assert(size(types::type_c<DirectDepsT>) == 0,
+    static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
     return internal::HaversackTraitsBuilder(direct, indirect + t, provides);
   }
   template <typename WrappedTypes>
   constexpr auto ExtendProvides(WrappedTypes t) const {
-    static_assert(size(types::type_c<DirectDepsT>) == 0,
+    static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
     return internal::HaversackTraitsBuilder(direct, indirect, provides + t);
@@ -689,12 +738,13 @@ struct HaversackTraitsBuilder {
   constexpr auto Build() const {
     constexpr HaversackTraitsBuilder self;
     constexpr auto make_type_set = [](auto types) {
-      return Apply([](auto... ts) { return types::MakeTypeSet(ts...); }, types);
+      return htls::meta::Apply(
+          [](auto... ts) { return htls::meta::MakeTypeSet(ts...); }, types);
     };
-    constexpr types::TypeSet direct_dep_set = make_type_set(self.direct);
-    constexpr types::TypeSet dep_set =
+    constexpr htls::meta::TypeSet direct_dep_set = make_type_set(self.direct);
+    constexpr htls::meta::TypeSet dep_set =
         direct_dep_set | make_type_set(self.indirect);
-    constexpr types::TypeSet provide_set = make_type_set(self.provides);
+    constexpr htls::meta::TypeSet provide_set = make_type_set(self.provides);
 
     constexpr bool no_direct_deps_are_provided =
         size((direct_dep_set & provide_set).Tuple()) == 0;
@@ -711,10 +761,10 @@ struct HaversackTraitsBuilder {
         "\"provided\" dependencies.");
     static_assert(all_direct_deps_unique,
                   "Each direct dependency should be unique.");
-    constexpr BasicTuple tags = Filter(
-        [](auto t) { return t != types::type_c<void>; },
+    constexpr htls::meta::BasicTuple tags = Filter(
+        [](auto t) { return t != htls::meta::type_c<void>; },
         Transform([](auto t) { return GetTag(t); }, direct_dep_set.Tuple()));
-    constexpr types::TypeSet tags_set = make_type_set(tags);
+    constexpr htls::meta::TypeSet tags_set = make_type_set(tags);
     constexpr bool all_tags_unique = size(tags) == size(tags_set.Tuple());
     static_assert(all_tags_unique,
                   "A Haversack cannot have multiple direct dependencies with "
@@ -741,27 +791,28 @@ HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT)
 // Initial type/value to be used when accumulating with
 // AccumulateHaversackTraits.
 using EmptyHaversackTraitsBuilder =
-    HaversackTraitsBuilder<BasicTuple<>, BasicTuple<>, BasicTuple<>>;
+    HaversackTraitsBuilder<htls::meta::BasicTuple<>, htls::meta::BasicTuple<>,
+                           htls::meta::BasicTuple<>>;
 
 // Accumulation functor which appends the type being accumulated to the correct
 // field of HaversackTraitsBuilder.
 struct AccumulateHaversackTraits {
   template <typename Sum, typename T>
-  constexpr auto operator()(Sum sum, types::Type<T> t) const {
-    if constexpr (is_template_instance_v<T, Provides>) {
+  constexpr auto operator()(Sum sum, htls::meta::Type<T> t) const {
+    if constexpr (htls::meta::IsTemplateInstance<Provides>(t)) {
       return sum.ExtendProvides(GetTypesFromProvides(t));
-    } else if constexpr (is_template_instance_v<T, Deps>) {
+    } else if constexpr (htls::meta::IsTemplateInstance<Deps>(t)) {
       return sum.ExtendIndirectDeps(GetTypesFromDeps((t)));
     } else if constexpr (std::is_base_of_v<CallsBase, T>) {
       return sum.ExtendIndirectDeps(GetTypesFromCalls(t));
     } else {
-      return sum.ExtendDirectDeps(MakeBasicTuple(t));
+      return sum.ExtendDirectDeps(htls::meta::MakeBasicTuple(t));
     }
   }
 };
 
 template <typename... Outputs, typename Input>
-auto RearrangeTuple(types::Type<std::tuple<Outputs...>>, Input input) {
+auto RearrangeTuple(htls::meta::Type<std::tuple<Outputs...>>, Input input) {
   return std::make_tuple(std::move(std::get<Outputs>(input))...);
 }
 
@@ -780,7 +831,7 @@ auto RearrangeTuple(types::Type<std::tuple<Outputs...>>, Input input) {
 // - AddedCtorArgs is all the arguments directly passed to the Haversack ctor.
 template <typename DesiredTuple, typename Compatibility,
           typename PropagatedTuple, typename... AddedCtorArgs>
-DesiredTuple CatAndSortTuples(types::Type<DesiredTuple> desired,
+DesiredTuple CatAndSortTuples(htls::meta::Type<DesiredTuple> desired,
                               Compatibility compatibility,
                               PropagatedTuple propagated_tuple,
                               AddedCtorArgs... added) {
@@ -809,7 +860,7 @@ auto CoerceCtorArg(T* t) {
 // not_null<shared_ptr>.
 template <typename T, typename = typename T::element_type>
 auto CoerceCtorArg(T t) {
-  if constexpr (types::IsValidExpr(
+  if constexpr (htls::meta::IsValidExpr(
                     t,
                     [](const auto& x)
                         -> decltype(std::declval<std::decay_t<decltype(x)>&&>()
@@ -828,8 +879,8 @@ inline std::nullptr_t CoerceCtorArg(std::nullptr_t) { return nullptr; }
 template <typename T>
 using CoercedCtorArg = decltype(CoerceCtorArg(std::declval<T&&>()));
 template <typename CtorArg>
-inline constexpr bool kIsValidCtorArg = types::IsValidExpr(
-    types::type_c<CtorArg>,
+inline constexpr bool kIsValidCtorArg = htls::meta::IsValidExpr(
+    htls::meta::type_c<CtorArg>,
     [](auto ctor_arg)
         -> decltype(CoerceCtorArg(
             std::declval<typename decltype(ctor_arg)::type&&>())) {});
@@ -843,7 +894,7 @@ inline constexpr bool kIsValidCtorArg = types::IsValidExpr(
 template <typename... Ts>
 constexpr HaversackTraits kHaversackTraits =
     Accumulate(internal::AccumulateHaversackTraits(),
-               internal::MakeBasicTuple(internal::types::type_c<Ts>...),
+               htls::meta::MakeBasicTuple(htls::meta::type_c<Ts>...),
                internal::EmptyHaversackTraitsBuilder())
         .Build();
 
@@ -853,14 +904,15 @@ constexpr HaversackTraits kHaversackTraits =
 // that all static_assert failures are emitted for
 // "HAVERSACK_GET_TESTER_MODE == 1".
 template <typename... Ts>
-constexpr auto TraitsOf(types::Type<Haversack<Ts...>>) {
+constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 #if HAVERSACK_GET_TESTER_MODE == 1
   // Emit a static_assert failure for each direct dependency in the haversack.
   internal::Transform(
       [](auto t) {
         using T = typename decltype(t)::type;
-        assert_is<types::internal_type_set::FnvHash64<Haversack<Ts...>, T>(), 0,
-                  Haversack<Ts...>, T>(std::equal_to<>{});
+        assert_is<
+            htls::meta::internal_type_set::FnvHash64<Haversack<Ts...>, T>(), 0,
+            Haversack<Ts...>, T>(std::equal_to<>{});
         return nullptr;
       },
       internal::kHaversackTraits<Ts...>.direct.Tuple());
@@ -870,17 +922,18 @@ constexpr auto TraitsOf(types::Type<Haversack<Ts...>>) {
 // Overload to dispatch to the actual Haversack<...> type instead of the
 // subtype.
 template <typename HaversackT>
-constexpr auto TraitsOf(types::Type<HaversackT> t) {
-  if constexpr (t != types::type_c<typename HaversackT::HaversackT>) {
-    return TraitsOf(types::type_c<typename HaversackT::HaversackT>);
+constexpr auto TraitsOf(htls::meta::Type<HaversackT> t) {
+  if constexpr (t != htls::meta::type_c<typename HaversackT::HaversackT>) {
+    return TraitsOf(htls::meta::type_c<typename HaversackT::HaversackT>);
   }
 }
 
 // T can be a WrappedType or a Tag.
 template <typename T, typename HaversackT>
 struct GetSharedHelper {
-  using MemberTupleType = typename decltype(TraitsOf(types::type_c<HaversackT>)
-                                                .MemberTupleType())::type;
+  using MemberTupleType =
+      typename decltype(TraitsOf(htls::meta::type_c<HaversackT>)
+                            .MemberTupleType())::type;
   static const auto& Get(const MemberTupleType& members) {
     using HolderT = Holder<typename decltype(GetMatchingWrappedType())::type>;
 #if HAVERSACK_GET_TESTER_MODE > 1
@@ -891,8 +944,8 @@ struct GetSharedHelper {
     // USED, and if this assert never triggers for a hash then that dependency
     // is UNUSED.
     assert_is<HAVERSACK_GET_TESTER_MODE,
-              types::internal_type_set::FnvHash64<HaversackT,
-                                                  typename HolderT::type>(),
+              htls::meta::internal_type_set::FnvHash64<
+                  HaversackT, typename HolderT::type>(),
               HaversackT, typename HolderT::type>(std::not_equal_to<>{});
 #endif
     const auto& value = std::get<HolderT>(members).value;
@@ -901,7 +954,8 @@ struct GetSharedHelper {
 #ifndef NDEBUG
     if (!IsNullable(GetMatchingWrappedType()) && !value) {
       std::cerr << "A value for \""
-                << internal::debug_type_name_v<T> << "\" was not "
+                << htls::meta::DebugTypeName(htls::meta::type_c<T>)
+                << "\" was not "
                 << "injected with MakeFakeHaversack but is used in this test.";
       assert(value);
       abort();
@@ -912,18 +966,18 @@ struct GetSharedHelper {
   // Returns a Type<U> where U is the WrappedType in the Haversack that T
   // matches. If there is no match, it returns void (note Type<void>).
   constexpr static auto GetMatchingWrappedType() {
-    if constexpr (Contains(types::type_c<T>,
-                           TraitsOf(types::type_c<HaversackT>).direct)) {
-      return types::type_c<T>;
+    if constexpr (Contains(htls::meta::type_c<T>,
+                           TraitsOf(htls::meta::type_c<HaversackT>).direct)) {
+      return htls::meta::type_c<T>;
     } else {
-      constexpr BasicTuple matching_tags = Filter(
+      constexpr htls::meta::BasicTuple matching_tags = Filter(
           [](auto t_arg) {
-            constexpr types::Type t = t_arg;
-            return GetTag(t) == types::type_c<T>;
+            constexpr htls::meta::Type t = t_arg;
+            return GetTag(t) == htls::meta::type_c<T>;
           },
-          TraitsOf(types::type_c<HaversackT>).direct.Tuple());
+          TraitsOf(htls::meta::type_c<HaversackT>).direct.Tuple());
       if constexpr (size(matching_tags) == 1) {
-        types::Type real_type = get<0>(matching_tags);
+        htls::meta::Type real_type = htls::meta::get<0>(matching_tags);
         return real_type;
       }
     }

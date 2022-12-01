@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "haversack/internal/type_set.h"
+#include "meta/type_set.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace hotels::haversack::internal::types {
+namespace htls::meta {
 namespace {
 
 struct A {};
@@ -35,11 +35,13 @@ struct ValueHolder {};
 static_assert(AllUnique(a, b, c), "Expected all unique types");
 static_assert(!AllUnique(c, b, c), "Expected not all unique types");
 
-static_assert(MakeTypeSet(a, b, c).Tuple() == MakeBasicTuple(a, b, c),
+static_assert(MakeTypeSet(a, b, c).Tuple() ==
+                  htls::meta::MakeBasicTuple(a, b, c),
               "Expected all unique types to remain after MakeTypeSet");
 static_assert(MakeTypeSet(c, b, c) == MakePrevalidatedTypeSet(c, b),
               "Expected MakeTypeSet to remove duplicate types");
-static_assert(MakePrevalidatedTypeSet(b, c).Tuple() == MakeBasicTuple(b, c),
+static_assert(MakePrevalidatedTypeSet(b, c).Tuple() ==
+                  htls::meta::MakeBasicTuple(b, c),
               "Expected MakePrevalidatedTypeSet to do nothing");
 
 static_assert(Contains(b, MakeTypeSet(a, b, c)),
@@ -48,10 +50,10 @@ static_assert(!Contains(d, MakeTypeSet(a, b, c)),
               "Expected Contains to not find a match");
 
 static_assert((MakeTypeSet(a, b, c) - MakeTypeSet(a, c)).Tuple() ==
-                  MakeBasicTuple(b),
+                  htls::meta::MakeBasicTuple(b),
               "Expected substracting a subset to leave the difference");
 static_assert((MakeTypeSet(a, c) - MakeTypeSet(a, c, b)).Tuple() ==
-                  MakeBasicTuple(),
+                  htls::meta::MakeBasicTuple(),
               "Expected subtracting a superset to leave nothing");
 static_assert(
     size(MakeTypeSet(type_c<ValueHolder<1>>, type_c<ValueHolder<1u>>)
@@ -63,11 +65,11 @@ static_assert((MakeTypeSet(a, b, c) | MakeTypeSet(a, d)) ==
               "Expected operator| to be union");
 
 static_assert((MakeTypeSet(a, b, c) & MakeTypeSet(a, c, d)).Tuple() ==
-                  MakeBasicTuple(a, c),
+                  htls::meta::MakeBasicTuple(a, c),
               "Expected operator& to be intersection");
 
 static_assert((MakeTypeSet(a, b, c) ^ MakeTypeSet(a, d)).Tuple() ==
-                  MakeBasicTuple(b, c, d),
+                  htls::meta::MakeBasicTuple(b, c, d),
               "Expected operator^ to be XOR (symmetric difference)");
 
 static_assert(MakeTypeSet(a, b, c) >= MakeTypeSet(a, c),
@@ -91,4 +93,4 @@ static_assert(!(MakeTypeSet(a) >= MakeTypeSet(b)) &&
               "Expected >= to be false for disjoint sets");
 
 }  // namespace
-}  // namespace hotels::haversack::internal::types
+}  // namespace htls::meta

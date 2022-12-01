@@ -169,11 +169,13 @@ struct SubA : A {
 struct TagA {};
 
 MATCHER_P(CanGet, type, "") {
-  *result_listener
-      << "Cannot get a "
-      << internal::debug_type_name_v<std::decay_t<decltype(type)>> << " from a "
-      << internal::debug_type_name_v<std::decay_t<decltype(arg)>>;
-  return internal::types::IsValidExpr(
+  *result_listener << "Cannot get a "
+                   << htls::meta::DebugTypeName(
+                          htls::meta::type_c<std::decay_t<decltype(type)>>)
+                   << " from a "
+                   << htls::meta::DebugTypeName(
+                          htls::meta::type_c<std::decay_t<decltype(arg)>>);
+  return htls::meta::IsValidExpr(
       arg,
       [=](const auto& sack)
           -> decltype(sack.template Get<std::decay_t<decltype(type)>>()) {});

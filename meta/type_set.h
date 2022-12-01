@@ -20,10 +20,10 @@
 #include <type_traits>
 #include <utility>
 
-#include "haversack/internal/basic_tuple.h"
-#include "haversack/internal/type.h"
+#include "meta/basic_tuple.h"
+#include "meta/type.h"
 
-namespace hotels::haversack::internal::types {
+namespace htls::meta {
 namespace internal_type_set {
 
 struct TypeSetCtorSentinel {
@@ -40,13 +40,13 @@ struct TypeSetCtorSentinel {
 template <typename... Ts>
 struct TypeSet {
   constexpr explicit TypeSet(internal_type_set::TypeSetCtorSentinel,
-                             BasicTuple<Type<Ts>...>) {}
+                             htls::meta::BasicTuple<Type<Ts>...>) {}
 
-  static constexpr BasicTuple<Type<Ts>...> Tuple() { return {}; }
+  static constexpr htls::meta::BasicTuple<Type<Ts>...> Tuple() { return {}; }
 };
 template <typename... Ts>
-TypeSet(internal_type_set::TypeSetCtorSentinel, BasicTuple<Type<Ts>...>)
-    -> TypeSet<Ts...>;
+TypeSet(internal_type_set::TypeSetCtorSentinel,
+        htls::meta::BasicTuple<Type<Ts>...>) -> TypeSet<Ts...>;
 
 namespace internal_type_set {
 
@@ -185,7 +185,7 @@ struct SortedTypeInfoCollection {
   template <std::ptrdiff_t index, std::ptrdiff_t compare_offset,
             std::ptrdiff_t offset_delta>
   constexpr bool IndexIsUniqueImpl() const {
-    constexpr BasicTuple<Type<Ts>...> tuple;
+    constexpr htls::meta::BasicTuple<Type<Ts>...> tuple;
     constexpr std::size_t rev = kReverseIndexes<Ts...>[index];
     constexpr std::size_t compare_index = rev + compare_offset;
     if constexpr (compare_index < 0 || compare_index >= size(tuple)) {
@@ -195,8 +195,8 @@ struct SortedTypeInfoCollection {
       if constexpr (kSortedTypeInfos<Ts...>[rev] ==
                     kSortedTypeInfos<Ts...>[compare_index]) {
         // This index has a matching info.
-        if constexpr (get<index>(tuple) ==
-                      get<kSortedTypeInfos<Ts...>[compare_index].index>(
+        if constexpr (htls::meta::get<index>(tuple) ==
+                      htls::meta::get<kSortedTypeInfos<Ts...>[compare_index].index>(
                           tuple)) {
           // The type and the info match so this index is not unique.
           return false;
@@ -226,16 +226,16 @@ constexpr auto MakeTypeSetImpl(std::index_sequence<indexes...>,
     // Predicate: Include t if it is exactly the first time it appears in infos,
     // otherwise exclude it.
     if constexpr (type_infos.template IndexIsUniqueSoFar<index>()) {
-      return MakeBasicTuple(t);
+      return htls::meta::MakeBasicTuple(t);
     } else {
-      return MakeBasicTuple();
+      return htls::meta::MakeBasicTuple();
     }
   };
   // Filter Ts using the above predicate.
   return TypeSet(
       internal_type_set::TypeSetCtorSentinel(),
       (transform(type_c<Ts>, std::integral_constant<std::size_t, indexes>()) +
-       ... + MakeBasicTuple()));
+       ... + htls::meta::MakeBasicTuple()));
 }
 
 template <typename... Ts, typename... Us, std::size_t... indexes>
@@ -247,9 +247,9 @@ constexpr auto DifferenceImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
     // Predicate: Include t if it only appears once in infos otherwise exclude
     // it.
     if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
-      return MakeBasicTuple(t);
+      return htls::meta::MakeBasicTuple(t);
     } else {
-      return MakeBasicTuple();
+      return htls::meta::MakeBasicTuple();
     }
   };
   // Filter Ts using the above predicate.
@@ -259,7 +259,7 @@ constexpr auto DifferenceImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
   return TypeSet(
       internal_type_set::TypeSetCtorSentinel(),
       (transform(ts, std::integral_constant<std::size_t, indexes>()) + ... +
-       MakeBasicTuple()));
+       htls::meta::MakeBasicTuple()));
 }
 
 template <typename... Ts, typename... Us, std::size_t... indexes>
@@ -270,9 +270,9 @@ constexpr auto IntersectionImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
     constexpr std::size_t index = decltype(index_constant)::value;
     // Predicate: Include t if t is NOT unique in infos, otherwise exclude it.
     if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
-      return MakeBasicTuple();
+      return htls::meta::MakeBasicTuple();
     } else {
-      return MakeBasicTuple(t);
+      return htls::meta::MakeBasicTuple(t);
     }
   };
   // Filter Ts using the above predicate.
@@ -282,7 +282,7 @@ constexpr auto IntersectionImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
   return TypeSet(
       internal_type_set::TypeSetCtorSentinel(),
       (transform(ts, std::integral_constant<std::size_t, indexes>()) + ... +
-       MakeBasicTuple()));
+       htls::meta::MakeBasicTuple()));
 }
 
 }  // namespace internal_type_set
@@ -292,7 +292,7 @@ constexpr auto IntersectionImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
 template <typename... Ts>
 constexpr auto MakePrevalidatedTypeSet(Ts... ts) {
   return TypeSet(internal_type_set::TypeSetCtorSentinel(),
-                 MakeBasicTuple(ts...));
+                 htls::meta::MakeBasicTuple(ts...));
 }
 
 // True if t is in p.
@@ -309,8 +309,9 @@ constexpr auto AppendIfUnique(TypeSet<Ts...> sum, Type<T> t) {
   if constexpr (Contains(t, sum)) {
     return sum;
   } else {
-    return Apply([](auto... ts) { return MakePrevalidatedTypeSet(ts...); },
-                 std::move(sum.Tuple()) + MakeBasicTuple(t));
+    return htls::meta::Apply(
+        [](auto... ts) { return MakePrevalidatedTypeSet(ts...); },
+        std::move(sum.Tuple()) + htls::meta::MakeBasicTuple(t));
   }
 }
 
@@ -331,20 +332,20 @@ constexpr auto AllUnique(Type<Ts>... ts) {
 template <typename... Ts, typename... Us>
 constexpr auto operator-(TypeSet<Ts...> t, TypeSet<Us...> u) {
   return internal_type_set::DifferenceImpl(
-      std::make_index_sequence<sizeof...(Ts)>(), u, types::type_c<Ts>...);
+      std::make_index_sequence<sizeof...(Ts)>(), u, type_c<Ts>...);
 }
 
 // Returns the TypeSet of types that are in t OR u.
 template <typename... Ts, typename... Us>
 constexpr auto operator|(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  return MakeTypeSet(types::type_c<Ts>..., types::type_c<Us>...);
+  return MakeTypeSet(type_c<Ts>..., type_c<Us>...);
 }
 
 // Returns the TypeSet of types that are in t AND u.
 template <typename... Ts, typename... Us>
 constexpr auto operator&(TypeSet<Ts...> t, TypeSet<Us...> u) {
   return internal_type_set::IntersectionImpl(
-      std::make_index_sequence<sizeof...(Ts)>(), u, types::type_c<Ts>...);
+      std::make_index_sequence<sizeof...(Ts)>(), u, type_c<Ts>...);
 }
 
 // Returns a TypeSet containing the types that are in t XOR u.
@@ -355,7 +356,7 @@ constexpr auto operator^(TypeSet<Ts...> t, TypeSet<Us...> u) {
   // this case, the types that are unique in Ts+Us is Ts XOR Us.
   return internal_type_set::DifferenceImpl(
       std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), MakeTypeSet(),
-      types::type_c<Ts>..., types::type_c<Us>...);
+      type_c<Ts>..., type_c<Us>...);
 }
 
 // t >= u iff the types in t are a superset of the types in u. `<=` is the
@@ -381,6 +382,6 @@ constexpr auto operator!=(TypeSet<Ts...> t, TypeSet<Us...> u) {
   return !(t == u);
 }
 
-}  // namespace hotels::haversack::internal::types
+}  // namespace htls::meta
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_SET_H_

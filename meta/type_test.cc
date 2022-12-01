@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "haversack/internal/type.h"
+#include "meta/type.h"
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
-namespace hotels::haversack::internal::types {
+namespace htls::meta {
 namespace {
 
 struct A {};
@@ -32,9 +32,10 @@ struct Types;
 static_assert(type_c<A> == Type<A>());
 static_assert(type_c<int> == Type(1));
 
-static_assert(AsTuple(Type<Types<A, B, C>>()) == MakeBasicTuple(a, b, c));
+static_assert(AsTuple(Type<Types<A, B, C>>()) ==
+              htls::meta::MakeBasicTuple(a, b, c));
 
-static_assert(FromTuple<Types>(MakeBasicTuple(a, b, c)) ==
+static_assert(FromTuple<Types>(htls::meta::MakeBasicTuple(a, b, c)) ==
               Type<Types<A, B, C>>());
 
 struct Foo {
@@ -61,7 +62,7 @@ static_assert(ValidExprOr(
 static_assert(MetaValueFunction<std::is_same>()(a, a));
 static_assert(MetaTypeFunction<std::remove_pointer>()(type_c<A*>) == a);
 
-static_assert(size(type_c<BasicTuple<A, B, C>>) == 3);
+static_assert(size(type_c<htls::meta::BasicTuple<A, B, C>>) == 3);
 
 TEST(MetaValueFunctionTest, IsConst) {
   const auto& func = MetaValueFunction<std::is_same, A>();
@@ -76,4 +77,4 @@ TEST(MetaTypeFunctionTest, IsConst) {
 }
 
 }  // namespace
-}  // namespace hotels::haversack::internal::types
+}  // namespace htls::meta
