@@ -116,6 +116,54 @@ TEST(TestOutputCombinators, Enumerate) {
   EXPECT_THAT(result, ElementsAre(1, 2, 4));
 }
 
+TEST(TestOutputCombinators, FrontLValue) {
+  std::vector<int> v{1, 2, 3};
+  auto result = Apply(v,       //
+                      Front()  //
+  );
+
+  EXPECT_THAT(result, 1);
+
+  static_assert(std::is_same_v<decltype(Apply(v,       //
+                                              Front()  //
+                                              )),
+                               int>);
+}
+
+TEST(TestOutputCombinators, FrontRef) {
+  std::vector<int> v{1, 2, 3};
+  auto& result = Apply(v,  //
+                       Ref(),
+                       Front()  //
+  );
+
+  EXPECT_THAT(result, 1);
+  EXPECT_THAT(&result, &v[0]);
+
+  static_assert(std::is_same_v<decltype(Apply(v,  //
+                                              Ref(),
+                                              Front()  //
+                                              )),
+                               int&>);
+}
+
+TEST(TestOutputCombinators, FrontRValue) {
+  std::vector<int> v{1, 2, 3};
+  auto add_one = [](int i) { return i + 1; };
+  auto result = Apply(v,                   //
+                      Transform(add_one),  //
+                      Front()              //
+  );
+
+  EXPECT_THAT(result, 2);
+
+  static_assert(std::is_same_v<decltype(Apply(v,                   //
+                                              Transform(add_one),  //
+                                              Front()              //
+                                              )),
+                               int>);
+}
+
 TEST(TestOutputCombinators, TakeToVector) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v,          //

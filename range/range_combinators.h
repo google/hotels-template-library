@@ -84,6 +84,20 @@ template <template <typename...> typename Collection,
           typename... CollectionParams, typename Appender, typename... Args>
 auto ToCollection(Appender appender, Args&&... args);
 
+// Takes the first element and makes it complete.
+// If the element is an l-value or r-value reference, it will be converted to a
+// value. If it is reference_wrapper, it will be returned as an l-value
+// reference.
+// Example:
+// std::vector v{1, 2, 3, 4};
+// int result = Apply(v, Front()); // result == 1
+// int result = Apply(v, Transform(add_one), Front());
+// int& result = Apply(v, Ref(), Front());
+// In: Incremental
+// Out: Complete
+// Note: If the range is empty, the behavior is undefined.
+inline auto Front();
+
 // Sorts the output.
 // In: Complete
 // Out: Complete
@@ -338,6 +352,26 @@ struct TakeImpl {
 };
 
 template <typename InputType>
+struct FrontImpl {
+  using OutputType =
+      decltype(UnwrapReference(std::move(std::declval<InputType>())));
+
+  std::optional<std::decay_t<InputType>> element;
+
+  template <typename T, typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
+    element = std::forward<T>(t);
+  }
+
+  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return element.has_value(); }
+
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(UnwrapReference(std::move(*element)));
+  }
+};
+
+template <typename InputType>
 struct EnumerateImpl {
   using OutputType =
       EnumeratedValue<decltype(UnwrapReference(std::declval<InputType>()))>;
@@ -449,10 +483,9 @@ inline auto ToVector() {
   // It is safe to pass std::vector as template-template parameter since
   // implementators are not allowed to add additional template parameters.
   // https://www.open-std.org/jtc1/sc22/wg21/docs/lwg-closed.html#94
-  return ToCollection<std::vector>(
-      [](auto& vector, auto&& value) {
-        vector.push_back(std::forward<decltype(value)>(value));
-      });
+  return ToCollection<std::vector>([](auto& vector, auto&& value) {
+    vector.push_back(std::forward<decltype(value)>(value));
+  });
 }
 
 template <typename Predicate>
@@ -513,6 +546,12 @@ inline auto Take(size_t count) {
   return MakeCombinator<ProcessingStyle::kIncremental,
                         ProcessingStyle::kIncremental,
                         internal_htls_range::TakeImpl>(count);
+}
+
+inline auto Front() {
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::FrontImpl>();
 }
 
 template <typename Equal>
