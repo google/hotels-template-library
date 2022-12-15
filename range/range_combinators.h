@@ -50,7 +50,7 @@ auto Filter(Predicate predicate);
 // Out: Incremental
 // Example:
 // std::vector<int> input_range = {1, 2, 3, 4};
-// std::vector<int> result = Apply(
+// std::vector<double> result = Apply(
 //   input_range, //
 //   Transform([](int i){return static_cast<double>(i) + 0.5;}), //
 //   ToVector() //
@@ -62,15 +62,19 @@ auto Filter(Predicate predicate);
 template <typename F>
 auto TransformComplete(F f);
 
-// Converts the output to a vector. The type of the vector is deduced.
+// Collects the inputs into a vector. The value type of the vector is deduced.
 // In: Incremental
 // Out: Complete
 inline auto ToVector();
 
-// Converts the output to a collection. The type of the collection is deduced.
-// This takes the collection as a template template parameter, followed by
-// additional type parameters that are passed to the template.
-// It takes arguments that will be passed to collection at construction.
+// Converts the input to a collection. The value type of the collection is
+// deduced. This takes the collection as a template template parameter,
+// followed by additional type parameters that are passed to the template.
+//
+// Appender: A function that takes a mutable refernce to the collection being
+//   built, and a value that it should add to the collection.
+// Args: Forwarded to the collection's constructor.
+//
 // In: Incremental
 // Out: Complete
 // Example:
@@ -79,12 +83,11 @@ inline auto ToVector();
 //     set.insert(std::forward<decltype(value)>(value));
 //   });
 // }
-
 template <template <typename...> typename Collection,
           typename... CollectionParams, typename Appender, typename... Args>
 auto ToCollection(Appender appender, Args&&... args);
 
-// Takes the first element and makes it complete.
+// Yields the first incremental input as a complete value.
 // If the element is an l-value or r-value reference, it will be converted to a
 // value. If it is reference_wrapper, it will be returned as an l-value
 // reference.
@@ -98,20 +101,20 @@ auto ToCollection(Appender appender, Args&&... args);
 // Note: If the range is empty, the behavior is undefined.
 inline auto Front();
 
-// Sorts the output.
+// Sorts the input.
 // In: Complete
 // Out: Complete
 // Note: Sort will sort the range in-place.
 template <typename Comparator = std::less<>>
 auto Sort(Comparator comparator = {});
 
-// For sorted input, filters out the repeating elements.
-// In: Incremental
-// Out: Incremental
+// Filters out repeating elements. Normally used with sorted input.
+// In: Complete
+// Out: Complete
 template <typename Equality = std::equal_to<>>
 auto Unique(Equality equality = {});
 
-// For sorted input, filters out the repeating elements.
+// Filters out repeating elements. Normally used with sorted input.
 // In: Incremental
 // Out: Incremental
 template <typename Equality = std::equal_to<>>
@@ -137,23 +140,38 @@ inline auto Ref();
 // Out: Incremental
 inline auto Move();
 
-// Structure to hold enumated values
+// Transforms to l-value reference.
+// In: Incremental
+// Out: Incremental
+inline auto LRef();
+
+// Takes the address of each input.
+// In: Incremental
+// Out: Incremental
+inline auto AddressOf();
+
+// Dereferences each input.
+// In: Incremental
+// Out: Incremental
+inline auto Deref();
+
+// Structure to hold enumerated values.
 template <typename R>
 struct EnumeratedValue {
-  size_t index;
-  R value;
+  size_t index = 0;
+  R value{};
 
   decltype(auto) ForwardValue() { return static_cast<R>(value); }
 };
 template <typename R>
 EnumeratedValue(size_t, R) -> EnumeratedValue<R>;
 
-// Enumerates values, providing an index.
+// Transforms values into `EnumeratedValue`s with an index.
 // In: Incremental
 // Out: Incremental
 inline auto Enumerate();
 
-// Drops the index and returns values
+// Transforms `EnumeratedValue`s into just the values.
 // In: Incremental
 // Out: Incremental
 inline auto Unenumerate();
@@ -164,25 +182,41 @@ inline auto Unenumerate();
 template <typename F>
 auto ForEach(F f);
 
-// Accumulates the values.
+// Accumulates the inputs.
+//
+//  init: The initial accumulated value to pass to f.
+//  f: An invocable called with the accumulated value and the next incremental
+//    input which should return the new accumulated value.
+//
 // In: Incremental
 // Out: Complete
-template <typename Accumulated, typename F>
-auto Accumulate(Accumulated accumulated, F f);
+template <typename Init, typename F>
+auto Accumulate(Init init, F f);
 
-// Tests if any element fulfills a condition
+// Accumulates the inputs in place and returns the accumulated value.
+//
+//  init: The initial accumulated value to pass to f.
+//  f: An invocable called with a reference to the accumulated value and the
+//    next incremental input which should update the accumulated value in place.
+//
+// In: Incremental
+// Out: Complete
+template <typename Init, typename F>
+auto AccumulateInPlace(Init init, F f);
+
+// Tests if any inputs fulfills a condition.
 // In: Incremental
 // Out: Complete
 template <typename Predicate>
 auto AnyOf(Predicate predicate);
 
-// Tests if all the elements fulfills a condition
+// Tests if all the inputs fulfills a condition.
 // In: Incremental
 // Out: Complete
 template <typename Predicate>
 auto AllOf(Predicate predicate);
 
-// Tests if none of the elements fulfills a condition
+// Tests if none of the inputs fulfills a condition.
 // In: Incremental
 // Out: Complete
 template <typename Predicate>
@@ -385,11 +419,11 @@ struct EnumerateImpl {
   }
 };
 
-template <typename InputType, typename Accumulated, typename F>
+template <typename InputType, typename Init, typename F>
 struct AccumulateInPlaceImpl {
-  using OutputType = Accumulated;
+  using OutputType = Init;
 
-  Accumulated accumulated;
+  Init accumulated;
   F f;
 
   template <typename Next>
@@ -612,23 +646,23 @@ inline auto Deref() {
   return Transform(deref);
 }
 
-template <typename Accumulated, typename F>
-auto AccumulateInPlace(Accumulated accumulated, F f) {
+template <typename Init, typename F>
+auto AccumulateInPlace(Init init, F f) {
   return MakeCombinator<
       ProcessingStyle::kIncremental, ProcessingStyle::kComplete,
-      internal_htls_range::AccumulateInPlaceImpl, Accumulated, F>(
-      std::move(accumulated), std::move(f));
+      internal_htls_range::AccumulateInPlaceImpl, Init, F>(
+      std::move(init), std::move(f));
 }
 
-template <typename Accumulated, typename F>
-auto Accumulate(Accumulated accumulated, F f) {
+template <typename Init, typename F>
+auto Accumulate(Init init, F f) {
   auto accumulate = [f = std::move(f)](auto& accumulated, auto&& value) {
     // Prevents f from returning a reference causing self-move.
     auto concrete = [](auto&& value) { return value; };
     accumulated = concrete(
         f(std::move(accumulated), std::forward<decltype(value)>(value)));
   };
-  return AccumulateInPlace(std::move(accumulated), std::move(accumulate));
+  return AccumulateInPlace(std::move(init), std::move(accumulate));
 }
 
 // Calls f for each value, and returns the number of values processed.
