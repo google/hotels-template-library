@@ -514,13 +514,20 @@ std::false_type IsTuple(...);
 template <typename... Ts>
 std::true_type IsTuple(const std::tuple<Ts...>&);
 
+// Forwards lvalue references as lvalue references and values or rvalue
+// references as values.
+template <typename T>
+T ForwardLRef(T& t) {
+  return std::forward<T>(t);
+}
+
 }  // namespace internal_htls_range
 
 template <typename Range, typename... Combinators>
 ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
     Range&& range, Combinators&&... combinators) {
   if constexpr (sizeof...(Combinators) == 0) {
-    return std::forward<Range>(range);
+    return internal_htls_range::ForwardLRef<Range>(range);
   } else {
     using InputType = decltype(std::forward<Range>(range));
     auto make_chain = [&](auto&&... combinators) mutable {

@@ -40,8 +40,7 @@ using ::testing::ElementsAreArray;
 using ::testing::Field;
 
 // To aid with testing things like stopping iteration early
-// this combinator just does an identity transform and increments a counter
-
+// this combinator just does an identity transform and increments a counter.
 auto Counter(int& count) {
   return Transform([&count](auto&& value) mutable -> decltype(auto) {
     ++count;
@@ -52,6 +51,21 @@ auto Counter(int& count) {
 TEST(TestOutputCombinators, NoCombinators) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v);
+  EXPECT_THAT(result, ElementsAre(1, 2, 3));
+}
+
+TEST(TestOutputCombinators, NoCombinatorsLifetimeExtension) {
+  const auto& result = Apply(std::vector<int>{1, 2, 3});
+  EXPECT_THAT(result, ElementsAre(1, 2, 3));
+}
+
+TEST(TestOutputCombinators, CombinatorsLifetimeExtension) {
+  const auto& result = Apply(std::vector<int>{1, 2, 3}, Sort());
+  EXPECT_THAT(result, ElementsAre(1, 2, 3));
+}
+
+TEST(TestOutputCombinators, ComposedCombinatorsLifetimeExtension) {
+  const auto& result = Apply(std::vector<int>{1, 2, 3}, Compose(Sort()));
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
 }
 
