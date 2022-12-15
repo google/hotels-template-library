@@ -34,28 +34,29 @@ namespace htls::range {
 // returns true.
 // In: Incremental
 // Out: Incremental
-// Example:
-// std::vector<int> input_range = {1, 2, 3, 4};
-// std::vector<int> result = Apply(
-//   input_range, //
-//   Filter([](int i){return i%2 == 1;}), //
-//   ToVector() //
-// );
-//// result is {1, 3}
+/* Example: ********************************************************************
+std::vector<int> input_range = {1, 2, 3, 4};
+std::vector<int> result = Apply(input_range,                               //
+                                Filter([](int i) { return i % 2 == 1; }),  //
+                                ToVector()                                 //
+);
+// result is {1, 3}
+// ****************************************************************************/
 template <typename Predicate>
 auto Filter(Predicate predicate);
 
 // Transforms a range. It outputs the result of f.
 // In: Incremental
 // Out: Incremental
-// Example:
-// std::vector<int> input_range = {1, 2, 3, 4};
-// std::vector<double> result = Apply(
-//   input_range, //
-//   Transform([](int i){return static_cast<double>(i) + 0.5;}), //
-//   ToVector() //
-// );
-//// result is {1.5, 2.5, 3.5, 4.5}
+/* Example: ********************************************************************
+std::vector<int> input_range = {1, 2, 3, 4};
+std::vector<double> result =
+    Apply(input_range,                                                    //
+          Transform([](int i) { return static_cast<double>(i) + 0.5; }),  //
+          ToVector()                                                      //
+    );
+// result is {1.5, 2.5, 3.5, 4.5}
+// ****************************************************************************/
 //
 // You can pass an invocable like a pointer to member
 // Transform(&MyStruct::int_member_variable)
@@ -77,12 +78,14 @@ inline auto ToVector();
 //
 // In: Incremental
 // Out: Complete
-// Example:
-// inline auto ToSet() {
-//   return ToCollection<std::set>([](auto& set, auto&& value) {
-//     set.insert(std::forward<decltype(value)>(value));
-//   });
-// }
+/* Example: ********************************************************************
+std::set<int> result =
+    Apply(std::vector{1, 2, 2, 3},
+          ToCollection<std::set>([](auto& set, auto&& value) {
+            set.insert(std::forward<decltype(value)>(value));
+          }));
+// result is {1, 2, 3}
+// ****************************************************************************/
 template <template <typename...> typename Collection,
           typename... CollectionParams, typename Appender, typename... Args>
 auto ToCollection(Appender appender, Args&&... args);
@@ -91,11 +94,12 @@ auto ToCollection(Appender appender, Args&&... args);
 // If the element is an l-value or r-value reference, it will be converted to a
 // value. If it is reference_wrapper, it will be returned as an l-value
 // reference.
-// Example:
-// std::vector v{1, 2, 3, 4};
-// int result = Apply(v, Front()); // result == 1
-// int result = Apply(v, Transform(add_one), Front());
-// int& result = Apply(v, Ref(), Front());
+/* Example: ********************************************************************
+std::vector v{1, 2, 3, 4};
+int result = Apply(v, Front());                      // result == 1
+int result = Apply(v, Transform(add_one), Front());  // result == 2
+int& result = Apply(v, Ref(), Front());              // &result == &v.front()
+// ****************************************************************************/
 // In: Incremental
 // Out: Complete
 // Note: If the range is empty, the behavior is undefined.
@@ -648,9 +652,9 @@ inline auto Deref() {
 
 template <typename Init, typename F>
 auto AccumulateInPlace(Init init, F f) {
-  return MakeCombinator<
-      ProcessingStyle::kIncremental, ProcessingStyle::kComplete,
-      internal_htls_range::AccumulateInPlaceImpl, Init, F>(
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kComplete,
+                        internal_htls_range::AccumulateInPlaceImpl, Init, F>(
       std::move(init), std::move(f));
 }
 
