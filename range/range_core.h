@@ -389,7 +389,8 @@ struct TypeHelper : Base {
                   CombinatorCreator::kInputProcessingStyle ==
                       ProcessingStyle::kIncremental) {
       using std::begin;
-      using ValueType = decltype(*begin(std::declval<OutputType>()));
+      using ValueType = decltype(*begin(
+          std::declval<std::add_lvalue_reference_t<OutputType>>()));
       return TypeHelper<TypeHelper, I + 1,
                         CombinatorCreator::kOutputProcessingStyle, ValueType,
                         typename CombinatorCreator::template Combinator<

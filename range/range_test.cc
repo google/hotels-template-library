@@ -50,67 +50,108 @@ auto Counter(int& count) {
 }
 
 template <typename T>
-class ValueWrapper {
-  T value_ = 0;
+struct MoveTracking {
+  T value = 0;
 
- public:
-  explicit ValueWrapper(T t) : value_(std::move(t)) {}
-  const T& value() const { return value_; }
-  static auto Matches(T t) {
-    return Property("value", &ValueWrapper::value, Eq(t));
+  explicit MoveTracking(T t) : value(std::move(t)) {}
+  MoveTracking(const MoveTracking&) = default;
+  MoveTracking& operator=(const MoveTracking&) = default;
+  MoveTracking(MoveTracking&& other) : value(other.value) {
+    other.value += 1000;
+  }
+  MoveTracking& operator=(MoveTracking&& other) {
+    value = other.value;
+    other.value += 1000;
+    return *this;
   }
 };
 
 template <typename T>
-class MoveOnlyValueWrapper {
-  T value_ = 0;
+class PlainValue {
+  MoveTracking<T> value_{0};
 
  public:
-  explicit MoveOnlyValueWrapper(T t) : value_(std::move(t)) {}
-  MoveOnlyValueWrapper(const MoveOnlyValueWrapper&) = delete;
-  MoveOnlyValueWrapper& operator=(const MoveOnlyValueWrapper&) = delete;
-  MoveOnlyValueWrapper(MoveOnlyValueWrapper&&) = default;
-  MoveOnlyValueWrapper& operator=(MoveOnlyValueWrapper&&) = default;
-  const T& value() const { return value_; }
+  explicit PlainValue(T t) : value_(MoveTracking<T>(std::move(t))) {}
+  const T& value() const { return value_.value; }
   static auto Matches(T t) {
-    return Property("value", &MoveOnlyValueWrapper::value, Eq(t));
+    return Property("value", &PlainValue::value, Eq(t));
+  }
+  bool operator==(const PlainValue& other) const {
+    return value() == other.value();
+  }
+  bool operator<(const PlainValue& other) const {
+    return value() < other.value();
   }
 };
 
 template <typename T>
-class ExpensiveCopyValueWrapper {
-  T value_ = 0;
+class MoveOnlyValue {
+  MoveTracking<T> value_{0};
 
  public:
-  explicit ExpensiveCopyValueWrapper(T t) : value_(std::move(t)) {}
-  ExpensiveCopyValueWrapper(const ExpensiveCopyValueWrapper&) {
+  explicit MoveOnlyValue(T t) : value_(MoveTracking<T>(std::move(t))) {}
+  MoveOnlyValue(const MoveOnlyValue&) = delete;
+  MoveOnlyValue& operator=(const MoveOnlyValue&) = delete;
+  MoveOnlyValue(MoveOnlyValue&&) = default;
+  MoveOnlyValue& operator=(MoveOnlyValue&&) = default;
+  const T& value() const { return value_.value; }
+  static auto Matches(T t) {
+    return Property("value", &MoveOnlyValue::value, Eq(t));
+  }
+  bool operator==(const MoveOnlyValue& other) const {
+    return value() == other.value();
+  }
+  bool operator<(const MoveOnlyValue& other) const {
+    return value() < other.value();
+  }
+};
+
+template <typename T>
+class ExpensiveCopyValue {
+  MoveTracking<T> value_{0};
+
+ public:
+  explicit ExpensiveCopyValue(T t) : value_(MoveTracking<T>(std::move(t))) {}
+  ExpensiveCopyValue(const ExpensiveCopyValue&) {
     LOG(FATAL) << "Copy ctor called";
   }
-  ExpensiveCopyValueWrapper& operator=(const ExpensiveCopyValueWrapper&) {
+  ExpensiveCopyValue& operator=(const ExpensiveCopyValue&) {
     LOG(FATAL) << "Copy assignment called";
     return *this;
   }
-  ExpensiveCopyValueWrapper(ExpensiveCopyValueWrapper&&) = default;
-  ExpensiveCopyValueWrapper& operator=(ExpensiveCopyValueWrapper&&) = default;
-  const T& value() const { return value_; }
+  ExpensiveCopyValue(ExpensiveCopyValue&&) = default;
+  ExpensiveCopyValue& operator=(ExpensiveCopyValue&&) = default;
+  const T& value() const { return value_.value; }
   static auto Matches(T t) {
-    return Property("value", &ExpensiveCopyValueWrapper::value, Eq(t));
+    return Property("value", &ExpensiveCopyValue::value, Eq(t));
+  }
+  bool operator==(const ExpensiveCopyValue& other) const {
+    return value() == other.value();
+  }
+  bool operator<(const ExpensiveCopyValue& other) const {
+    return value() < other.value();
   }
 };
 
 template <typename T>
-class NoMoveValueWrapper {
-  T value_ = 0;
+class NoMoveValue {
+  MoveTracking<T> value_{0};
 
  public:
-  explicit NoMoveValueWrapper(T t) : value_(std::move(t)) {}
-  NoMoveValueWrapper(const NoMoveValueWrapper&) = delete;
-  NoMoveValueWrapper& operator=(const NoMoveValueWrapper&) = delete;
-  NoMoveValueWrapper(NoMoveValueWrapper&&) = delete;
-  NoMoveValueWrapper& operator=(NoMoveValueWrapper&&) = delete;
-  const T& value() const { return value_; }
+  explicit NoMoveValue(T t) : value_(MoveTracking<T>(std::move(t))) {}
+  NoMoveValue(const NoMoveValue&) = delete;
+  NoMoveValue& operator=(const NoMoveValue&) = delete;
+  NoMoveValue(NoMoveValue&&) = delete;
+  NoMoveValue& operator=(NoMoveValue&&) = delete;
+  const T& value() const { return value_.value; }
   static auto Matches(T t) {
-    return Property("value", &NoMoveValueWrapper::value, Eq(t));
+    return Property("value", &NoMoveValue::value, Eq(t));
+  }
+  bool operator==(const NoMoveValue& other) const {
+    return value() == other.value();
+  }
+  bool operator<(const NoMoveValue& other) const {
+    return value() < other.value();
   }
 };
 
@@ -182,17 +223,14 @@ class NoMoveContainer {
   auto end() const { return container_.end(); }
 };
 
-template <template <typename> typename Container, typename T>
+enum class ReferenceStyle : bool { kLRef, kRRef };
+
+template <template <typename> typename Container, typename T,
+          ReferenceStyle style>
 struct ContainerWrapper {
   using type = Container<T>;
   using value_type = T;
-  static type Make(std::vector<int> v = {1, 2, 3}) {
-    std::deque<T> d;
-    for (int i : v) {
-      d.emplace_back(i);
-    }
-    return type(std::move(d));
-  }
+  static constexpr ReferenceStyle reference_style = style;
   template <typename... Ts>
   static auto Matches(Ts&&... ts) {
     return ElementsAre(value_type::Matches(std::forward<Ts>(ts))...);
@@ -203,118 +241,189 @@ template <template <typename> typename>
 struct AllContainers {};
 template <typename>
 struct AllValues {};
+template <ReferenceStyle>
+struct AllReferences {};
+template <typename...>
+struct Conjunction {};
+template <typename...>
+struct Disjunction {};
 
 template <typename, typename>
 struct TypeParameterMatches : std::false_type {};
 template <typename T>
 struct TypeParameterMatches<T, T> : std::true_type {};
-template <template <typename> typename T, typename U>
-struct TypeParameterMatches<AllContainers<T>, ContainerWrapper<T, U>>
+template <template <typename> typename T, typename U, ReferenceStyle style>
+struct TypeParameterMatches<AllContainers<T>, ContainerWrapper<T, U, style>>
     : std::true_type {};
-template <template <typename> typename T, typename U>
-struct TypeParameterMatches<AllValues<U>, ContainerWrapper<T, U>>
+template <template <typename> typename T, typename U, ReferenceStyle style>
+struct TypeParameterMatches<AllValues<U>, ContainerWrapper<T, U, style>>
     : std::true_type {};
+template <ReferenceStyle style, typename T>
+struct TypeParameterMatches<AllReferences<style>, T>
+    : std::bool_constant<style == T::reference_style> {};
+template <typename... Ts, typename T>
+struct TypeParameterMatches<Conjunction<Ts...>, T>
+    : std::conjunction<TypeParameterMatches<Ts, T>...> {};
+template <typename... Ts, typename T>
+struct TypeParameterMatches<Disjunction<Ts...>, T>
+    : std::disjunction<TypeParameterMatches<Ts, T>...> {};
 
 template <typename T, typename... Ts>
 constexpr bool SkipBlocklist() {
   return (!TypeParameterMatches<Ts, T>::value && ...);
 }
+template <typename T, typename... Ts>
+constexpr bool OnlyAllowlist() {
+  return !SkipBlocklist<T, Ts...>();
+}
 
 template <typename T>
-class CombinatorTest : public testing::Test {};
+class CombinatorTest : public testing::Test {
+ protected:
+  decltype(auto) Make(std::vector<int> v = {1, 2, 3}) {
+    std::deque<typename T::value_type> d;
+    for (int i : v) {
+      d.emplace_back(i);
+    }
+    if constexpr (T::reference_style == ReferenceStyle::kLRef) {
+      value_.emplace(std::move(d));
+      return *value_;
+    } else {
+      return typename T::type(std::move(d));
+    }
+  }
+  template <typename M>
+  void InputMatches(const M& m) {
+    if constexpr (T::reference_style == ReferenceStyle::kLRef) {
+      EXPECT_THAT(value_, testing::Optional(m));
+    }
+  }
+
+ private:
+  std::conditional_t<T::reference_style == ReferenceStyle::kLRef,
+                     std::optional<typename T::type>, nullptr_t>
+      value_;
+};
 
 TYPED_TEST_SUITE_P(CombinatorTest);
 
 TYPED_TEST_P(CombinatorTest, NoCombinators) {
-  if constexpr (SkipBlocklist<TypeParam, AllContainers<NoMoveContainer>>()) {
-    auto result = Apply(TypeParam::Make());
+  if constexpr (SkipBlocklist<
+                    TypeParam,
+                    Conjunction<AllContainers<NoMoveContainer>,
+                                AllReferences<ReferenceStyle::kRRef>>>()) {
+    const auto& result = Apply(this->Make());
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
 
-TYPED_TEST_P(CombinatorTest, NoCombinatorsLifetimeExtension) {
-  if constexpr (SkipBlocklist<TypeParam, AllContainers<NoMoveContainer>>()) {
-    const auto& result = Apply(TypeParam::Make());
+TYPED_TEST_P(CombinatorTest, NoCombinatorsCopy) {
+  if constexpr (SkipBlocklist<TypeParam, AllContainers<NoMoveContainer>,
+                              AllReferences<ReferenceStyle::kLRef>>() ||
+                OnlyAllowlist<ContainerWrapper<DequeContainer, PlainValue<int>,
+                                               ReferenceStyle::kLRef>>()) {
+    auto result = Apply(this->Make());
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
 
-TYPED_TEST_P(CombinatorTest, NoCombinatorsLRef) {
-  auto input = TypeParam::Make();
-  auto& result = Apply(input);
-  EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
-}
-
-TYPED_TEST_P(CombinatorTest, NoCombinatorsMove) {
-  if constexpr (SkipBlocklist<TypeParam, AllContainers<NoMoveContainer>>()) {
-    auto input = TypeParam::Make();
-    auto result = Apply(std::move(input));
+TYPED_TEST_P(CombinatorTest, SortTest) {
+  if constexpr (SkipBlocklist<
+                    TypeParam, AllValues<NoMoveValue<int>>,
+                    Conjunction<AllContainers<NoMoveContainer>,
+                                AllReferences<ReferenceStyle::kRRef>>>()) {
+    const auto& result = Apply(this->Make({2, 1, 3}), Sort());
+    this->InputMatches(testing::Address(&result));
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
 
-TYPED_TEST_P(CombinatorTest, InplaceSort) {
-  if constexpr (SkipBlocklist<TypeParam,
-                              AllValues<NoMoveValueWrapper<int>>>()) {
-    auto input = TypeParam::Make({2, 1, 3});
-    auto& result = Apply(input, Sort([](const auto& a, const auto& b) {
-                           return a.value() < b.value();
-                         }));
-    EXPECT_THAT(result, testing::Address(&input));
+TYPED_TEST_P(CombinatorTest, ComposeSortTest) {
+  if constexpr (SkipBlocklist<
+                    TypeParam, AllValues<NoMoveValue<int>>,
+                    Conjunction<AllContainers<NoMoveContainer>,
+                                AllReferences<ReferenceStyle::kRRef>>>()) {
+    const auto& result = Apply(this->Make({2, 1, 3}), Compose(Sort()));
+    this->InputMatches(testing::Address(&result));
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
 
-TYPED_TEST_P(CombinatorTest, MoveSort) {
-  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValueWrapper<int>>,
-                              AllContainers<NoMoveContainer>>()) {
-    auto result = Apply(TypeParam::Make({2, 1, 3}),
-                        Sort([](const auto& a, const auto& b) {
-                          return a.value() < b.value();
-                        }));
+TYPED_TEST_P(CombinatorTest, ToVectorTest) {
+  if constexpr (OnlyAllowlist<TypeParam, AllValues<PlainValue<int>>>()) {
+    auto result = Apply(this->Make(), ToVector());
+    this->InputMatches(TypeParam::Matches(1, 2, 3));
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(CombinatorTest, NoCombinators,
-                            NoCombinatorsLifetimeExtension, NoCombinatorsMove,
-                            NoCombinatorsLRef, InplaceSort, MoveSort);
+TYPED_TEST_P(CombinatorTest, ToVectorMoveTest) {
+  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValue<int>>>()) {
+    auto result = Apply(this->Make(), Move(), ToVector());
+    this->InputMatches(TypeParam::Matches(1001, 1002, 1003));
+    EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
+  }
+}
+
+REGISTER_TYPED_TEST_SUITE_P(CombinatorTest, NoCombinators, NoCombinatorsCopy,
+                            SortTest, ComposeSortTest, ToVectorTest,
+                            ToVectorMoveTest);
 
 using CombinatorTestTypeParameters = ::testing::Types<
-    ContainerWrapper<DequeContainer, ValueWrapper<int>>,
-    ContainerWrapper<DequeContainer, MoveOnlyValueWrapper<int>>,
-    ContainerWrapper<DequeContainer, ExpensiveCopyValueWrapper<int>>,
-    ContainerWrapper<DequeContainer, NoMoveValueWrapper<int>>,
-    ContainerWrapper<MoveOnlyContainer, ValueWrapper<int>>,
-    ContainerWrapper<MoveOnlyContainer, MoveOnlyValueWrapper<int>>,
-    ContainerWrapper<MoveOnlyContainer, ExpensiveCopyValueWrapper<int>>,
-    ContainerWrapper<MoveOnlyContainer, NoMoveValueWrapper<int>>,
-    ContainerWrapper<ExpensiveCopyContainer, ValueWrapper<int>>,
-    ContainerWrapper<ExpensiveCopyContainer, MoveOnlyValueWrapper<int>>,
-    ContainerWrapper<ExpensiveCopyContainer, ExpensiveCopyValueWrapper<int>>,
-    ContainerWrapper<ExpensiveCopyContainer, NoMoveValueWrapper<int>>,
-    ContainerWrapper<NoMoveContainer, ValueWrapper<int>>,
-    ContainerWrapper<NoMoveContainer, MoveOnlyValueWrapper<int>>,
-    ContainerWrapper<NoMoveContainer, ExpensiveCopyValueWrapper<int>>,
-    ContainerWrapper<NoMoveContainer, NoMoveValueWrapper<int>>>;
+    ContainerWrapper<DequeContainer, PlainValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<DequeContainer, MoveOnlyValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<DequeContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<DequeContainer, NoMoveValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<MoveOnlyContainer, PlainValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<MoveOnlyContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<MoveOnlyContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<MoveOnlyContainer, NoMoveValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<ExpensiveCopyContainer, PlainValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<ExpensiveCopyContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<ExpensiveCopyContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<ExpensiveCopyContainer, NoMoveValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<NoMoveContainer, PlainValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<NoMoveContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<NoMoveContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kLRef>,
+    ContainerWrapper<NoMoveContainer, NoMoveValue<int>, ReferenceStyle::kLRef>,
+    ContainerWrapper<DequeContainer, PlainValue<int>, ReferenceStyle::kRRef>,
+    ContainerWrapper<DequeContainer, MoveOnlyValue<int>, ReferenceStyle::kRRef>,
+    ContainerWrapper<DequeContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<DequeContainer, NoMoveValue<int>, ReferenceStyle::kRRef>,
+    ContainerWrapper<MoveOnlyContainer, PlainValue<int>, ReferenceStyle::kRRef>,
+    ContainerWrapper<MoveOnlyContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<MoveOnlyContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<MoveOnlyContainer, NoMoveValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<ExpensiveCopyContainer, PlainValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<ExpensiveCopyContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<ExpensiveCopyContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<ExpensiveCopyContainer, NoMoveValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<NoMoveContainer, PlainValue<int>, ReferenceStyle::kRRef>,
+    ContainerWrapper<NoMoveContainer, MoveOnlyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<NoMoveContainer, ExpensiveCopyValue<int>,
+                     ReferenceStyle::kRRef>,
+    ContainerWrapper<NoMoveContainer, NoMoveValue<int>, ReferenceStyle::kRRef>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(Parameterized, CombinatorTest,
                                CombinatorTestTypeParameters);
-
-TEST(TestOutputCombinators, CombinatorsLifetimeExtension) {
-  const auto& result = Apply(std::vector<int>{1, 2, 3}, Sort());
-  EXPECT_THAT(result, ElementsAre(1, 2, 3));
-}
-
-TEST(TestOutputCombinators, ComposedCombinatorsLifetimeExtension) {
-  const auto& result = Apply(std::vector<int>{1, 2, 3}, Compose(Sort()));
-  EXPECT_THAT(result, ElementsAre(1, 2, 3));
-}
-
-TEST(TestOutputCombinators, ToVector) {
-  std::vector<int> v{1, 2, 3};
-  auto result = Apply(v, ToVector());
-  EXPECT_THAT(result, ElementsAre(1, 2, 3));
-}
 
 inline auto ToSet() {
   return ToCollection<std::set>([](auto& set, auto&& value) {
