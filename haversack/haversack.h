@@ -99,6 +99,7 @@ class Haversack {
   // Internal ctor sentinal type.
   using CtorSentinel = internal::CtorSentinel;
 
+ public:
   // Get the traits for this Haversack.
   static constexpr auto Traits() {
     return internal::TraitsOf(htls::meta::type_c<Haversack>);
@@ -108,7 +109,6 @@ class Haversack {
   static_assert(!std::is_same_v<decltype(Traits()), void>,
                 "There was an issue building the haversack traits.");
 
- public:
   // Public alias for the Haversack type.
   using HaversackT = Haversack;
 
@@ -346,8 +346,7 @@ class Haversack {
             internal::CatAndSortTuples(Traits().MemberTupleType(),
                                        compatibility, std::move(pt),
                                        std::move(added)...))) {
-    auto checks =
-        Traits().AssertIsValidHaversack(compatibility);
+    auto checks = Traits().AssertIsValidHaversack(compatibility);
     RunChecks(checks);
   }
 
@@ -449,7 +448,9 @@ void main() {
 // ****************************************************************************/
 template <auto&&... xs>
 struct Calls : internal::CallsBase {
-  using types = htls::meta::BasicTuple<htls::meta::Type<decltype(xs)>...>;
+  using IndividualCalls =
+      htls::meta::BasicTuple<htls::meta::Type<Calls<xs>>...>;
+  using FirstType = std::decay_t<decltype((xs,...))>;
 };
 template <typename...>
 struct Deps {};

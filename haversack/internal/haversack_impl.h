@@ -586,6 +586,31 @@ constexpr bool FirstIsHaversack() {
   }
 }
 
+template <typename ChildHaversackT, typename CallerT>
+struct ChildHaversackMetadata {
+  using ChildHaversack = ChildHaversackT;
+  using Caller = CallerT;
+  static constexpr bool has_caller =
+      htls::meta::type_c<void> != htls::meta::type_c<Caller>;
+
+  template <typename F, typename Parent>
+  constexpr void Visit(F f, htls::meta::Type<Parent> parent) const {
+    f(htls::meta::type_c<ChildHaversack>, htls::meta::type_c<Caller>, parent);
+    Transform(
+        [&](auto grandchild_haversack) {
+          typename decltype(grandchild_haversack)::type().Visit(
+              f, htls::meta::type_c<ChildHaversack>);
+          return false;
+        },
+        TraitsOf(htls::meta::type_c<ChildHaversack>).child_haversacks.Tuple());
+  }
+};
+template <typename ChildHaversackT, typename CallerT>
+constexpr auto MakeChildHaversackMetadata(htls::meta::Type<ChildHaversackT>,
+                                          htls::meta::Type<CallerT>) {
+  return htls::meta::type_c<ChildHaversackMetadata<ChildHaversackT, CallerT>>;
+}
+
 // All types specified in Deps::Value must exist in the Haversack, but are not
 // directly readable unless the type is also a direct dependency.
 //
@@ -593,17 +618,18 @@ constexpr bool FirstIsHaversack() {
 // flattened into the result of Value.
 template <typename... Ts>
 constexpr auto GetTypesFromDeps(htls::meta::Type<Deps<Ts...>>) {
-  auto get_arguments_that_are_haversacks = [](auto t) {
+  auto get_all_deps_from_haversack = [](auto t) {
     static_assert(IsHaversack(t), "All types in Deps must be Haversacks.");
     if constexpr (IsHaversack(t)) {
-      return TraitsOf(t).all_deps.Tuple();
+      return htls::meta::MakeBasicTuple(
+          MakeChildHaversackMetadata(t, htls::meta::type_c<void>));
     } else {
       // Non-runtime reachable fallthrough case to avoid further compilation
       // errors other than the above static_assert.
       return htls::meta::BasicTuple<>();
     }
   };
-  return Concat(get_arguments_that_are_haversacks(htls::meta::type_c<Ts>)...);
+  return Concat(get_all_deps_from_haversack(htls::meta::type_c<Ts>)...);
 }
 
 // is_template_instance only works when all template parameters are types, so
@@ -617,20 +643,30 @@ struct CallsBase {};
 // Haversack instances have their contained types flattened into the result.
 template <typename CallsInstance>
 constexpr auto GetTypesFromCalls(htls::meta::Type<CallsInstance>) {
-  auto get_arguments_that_are_haversacks = [](auto t) {
-    using FuncT = std::remove_const_t<
-        std::remove_reference_t<typename decltype(t)::type>>;
+  auto get_arguments_that_are_haversacks = [](auto individual_calls) {
+    using FuncT = typename decltype(individual_calls)::type::FirstType;
     htls::meta::BasicTuple args = htls::meta::AsTuple(
         htls::meta::type_c<typename htls::meta::function_traits<FuncT>::args>);
-    return Filter([](auto arg) { return IsHaversack(arg); },
-                  Transform(htls::meta::MetaTypeFunction<std::decay>(), args));
+    return Transform(
+        [&](auto child_haversack) {
+          return MakeChildHaversackMetadata(child_haversack, individual_calls);
+        },
+        Filter([](auto arg) { return IsHaversack(arg); },
+               Transform(htls::meta::MetaTypeFunction<std::decay>(), args)));
   };
   // For each function in Funcs, htls::meta::get all of its arguments that are
   // Haversacks as a htls::meta::BasicTuple. Concatenate each Funcs result into
   // one htls::meta::BasicTuple of Haversacks then create a Deps from those
   // types and use its Haversack flattening logic.
-  return GetTypesFromDeps(htls::meta::FromTuple<Deps>(Flatten(Transform(
-      get_arguments_that_are_haversacks, typename CallsInstance::types()))));
+  return Flatten(Transform(get_arguments_that_are_haversacks,
+                           typename CallsInstance::IndividualCalls()));
+}
+
+template <typename... Ts>
+constexpr auto GetAllDepsFromChildHaversackMetadatas(
+    htls::meta::BasicTuple<htls::meta::Type<Ts>...>) {
+  return Concat(TraitsOf(htls::meta::type_c<typename Ts::ChildHaversack>)
+                    .all_deps.Tuple()...);
 }
 
 // All types specified in Provides::Value are expected to be passed to the
@@ -649,16 +685,20 @@ constexpr auto GetTypesFromProvides(
 // - AllDepsT is a TypeSet of all of the types which are dependencies of the
 // associated Haversack (direct and indirect) that are not provided by this
 // Haversack or a descendant Haversack.
+// - ChildHaversacksT is a TypeSet of all the child haversack types as
+// `ChildHaversackMetadata` template instances.
 // - BuilderSuccessT is a std::bool_constant which is std::true_type iff all the
 // checks in HaversackTraitsBuilder passed. This lets us skip later checks if we
 // already have failures to avoid exploding the error output. Failing a
 // static_assert does not stop compilation automatically so we explicitly skip
 // the rest of the validation if we htls::meta::get any failures.
 // - All the types in the sets are WrappedTypes.
-template <typename DirectDepsT, typename AllDepsT, typename BuilderSuccessT>
+template <typename DirectDepsT, typename AllDepsT, typename ChildHaversacksT,
+          typename BuilderSuccessT>
 struct HaversackTraits {
   DirectDepsT direct;
   AllDepsT all_deps;
+  ChildHaversacksT child_haversacks;
   using BuilderSuccessType = BuilderSuccessT;
 
   template <typename Compatibility>
@@ -692,12 +732,16 @@ struct HaversackTraits {
         all_deps.Tuple()));
   }
   constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps,
-                            BuilderSuccessT)
-      : direct(direct), all_deps(all_deps) {}
+                            ChildHaversacksT child_haversacks, BuilderSuccessT)
+      : direct(direct),
+        all_deps(all_deps),
+        child_haversacks(child_haversacks) {}
 };
-template <typename DirectDepsT, typename AllDepsT, typename BuilderSuccessT>
-HaversackTraits(DirectDepsT, AllDepsT, BuilderSuccessT)
-    -> HaversackTraits<DirectDepsT, AllDepsT, BuilderSuccessT>;
+template <typename DirectDepsT, typename AllDepsT, typename ChildHaversacksT,
+          typename BuilderSuccessT>
+HaversackTraits(DirectDepsT, AllDepsT, ChildHaversacksT, BuilderSuccessT)
+    -> HaversackTraits<DirectDepsT, AllDepsT, ChildHaversacksT,
+                       BuilderSuccessT>;
 
 // Holds the different sets of types, organized into different categories.
 //
@@ -710,29 +754,42 @@ HaversackTraits(DirectDepsT, AllDepsT, BuilderSuccessT)
 // - ProvidesT is a htls::meta::BasicTuple of WrappedType Types which
 // represents all the types which are "provided" which have been added to the
 // builder so far.
-template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT>
+// - ChildHaversacksT is a BasicTuple of ChildHaversackMetadata types which
+// represents all the child haversacks that have been added to the builder so
+// far.
+template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT,
+          typename ChildHaversacksT>
 struct HaversackTraitsBuilder {
   DirectDepsT direct;
   IndirectDepsT indirect;
   ProvidesT provides;
+  ChildHaversacksT child_haversacks;
 
   template <typename WrappedTypes>
   constexpr auto ExtendDirectDeps(WrappedTypes t) const {
-    return internal::HaversackTraitsBuilder(direct + t, indirect, provides);
+    return internal::HaversackTraitsBuilder(direct + t, indirect, provides,
+                                            child_haversacks);
   }
   template <typename WrappedTypes>
   constexpr auto ExtendIndirectDeps(WrappedTypes t) const {
     static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
-    return internal::HaversackTraitsBuilder(direct, indirect + t, provides);
+    return internal::HaversackTraitsBuilder(direct, indirect + t, provides,
+                                            child_haversacks);
   }
   template <typename WrappedTypes>
   constexpr auto ExtendProvides(WrappedTypes t) const {
     static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
-    return internal::HaversackTraitsBuilder(direct, indirect, provides + t);
+    return internal::HaversackTraitsBuilder(direct, indirect, provides + t,
+                                            child_haversacks);
+  }
+  template <typename ChildHaversackMetadatas>
+  constexpr auto ExtendChildHaversacks(ChildHaversackMetadatas t) const {
+    return internal::HaversackTraitsBuilder(direct, indirect, provides,
+                                            child_haversacks + t);
   }
 
   constexpr auto Build() const {
@@ -778,21 +835,25 @@ struct HaversackTraitsBuilder {
         no_direct_deps_are_provided && indirect_deps_is_superset_of_provides &&
         all_direct_deps_unique && all_tags_unique && no_tags_as_deps>;
     return HaversackTraits(direct_dep_set, dep_set - provide_set,
+                           make_type_set(self.child_haversacks),
                            BuilderSuccessT());
   }
 
   constexpr HaversackTraitsBuilder() = default;
-  constexpr HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT) {}
+  constexpr HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT,
+                                   ChildHaversacksT) {}
 };
-template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT>
-HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT)
-    -> HaversackTraitsBuilder<DirectDepsT, IndirectDepsT, ProvidesT>;
+template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT,
+          typename ChildHaversacksT>
+HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT, ChildHaversacksT)
+    -> HaversackTraitsBuilder<DirectDepsT, IndirectDepsT, ProvidesT,
+                              ChildHaversacksT>;
 
 // Initial type/value to be used when accumulating with
 // AccumulateHaversackTraits.
 using EmptyHaversackTraitsBuilder =
     HaversackTraitsBuilder<htls::meta::BasicTuple<>, htls::meta::BasicTuple<>,
-                           htls::meta::BasicTuple<>>;
+                           htls::meta::BasicTuple<>, htls::meta::BasicTuple<>>;
 
 // Accumulation functor which appends the type being accumulated to the correct
 // field of HaversackTraitsBuilder.
@@ -802,9 +863,17 @@ struct AccumulateHaversackTraits {
     if constexpr (htls::meta::IsTemplateInstance<Provides>(t)) {
       return sum.ExtendProvides(GetTypesFromProvides(t));
     } else if constexpr (htls::meta::IsTemplateInstance<Deps>(t)) {
-      return sum.ExtendIndirectDeps(GetTypesFromDeps((t)));
+      constexpr auto child_haversacks = GetTypesFromDeps(t);
+      return sum
+          .ExtendIndirectDeps(
+              GetAllDepsFromChildHaversackMetadatas(child_haversacks))
+          .ExtendChildHaversacks(child_haversacks);
     } else if constexpr (std::is_base_of_v<CallsBase, T>) {
-      return sum.ExtendIndirectDeps(GetTypesFromCalls(t));
+      constexpr auto child_haversacks = GetTypesFromCalls(t);
+      return sum
+          .ExtendIndirectDeps(
+              GetAllDepsFromChildHaversackMetadatas(child_haversacks))
+          .ExtendChildHaversacks(child_haversacks);
     } else {
       return sum.ExtendDirectDeps(htls::meta::MakeBasicTuple(t));
     }
