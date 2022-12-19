@@ -338,6 +338,20 @@ TYPED_TEST_P(CombinatorTest, SortTest) {
   }
 }
 
+TYPED_TEST_P(CombinatorTest, TransformCompleteReturnValue) {
+  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValue<int>>,
+                              Conjunction<AllContainers<NoMoveContainer>,
+                                          AllReferences<ReferenceStyle::kRRef>>,
+                              AllReferences<ReferenceStyle::kLRef>>() ||
+                OnlyAllowlist<TypeParam,
+                              ContainerWrapper<DequeContainer, PlainValue<int>,
+                                               ReferenceStyle::kLRef>>()) {
+    auto result =
+        Apply(this->Make(), TransformComplete([](auto v) { return v; }));
+    EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
+  }
+}
+
 TYPED_TEST_P(CombinatorTest, ComposeSortTest) {
   if constexpr (SkipBlocklist<
                     TypeParam, AllValues<NoMoveValue<int>>,
@@ -365,8 +379,13 @@ TYPED_TEST_P(CombinatorTest, ToVectorMoveTest) {
   }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(CombinatorTest, NoCombinators, NoCombinatorsCopy,
-                            SortTest, ComposeSortTest, ToVectorTest,
+REGISTER_TYPED_TEST_SUITE_P(CombinatorTest,                //
+                            NoCombinators,                 //
+                            NoCombinatorsCopy,             //
+                            SortTest,                      //
+                            TransformCompleteReturnValue,  //
+                            ComposeSortTest,               //
+                            ToVectorTest,                  //
                             ToVectorMoveTest);
 
 using CombinatorTestTypeParameters = ::testing::Types<

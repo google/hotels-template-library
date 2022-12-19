@@ -306,8 +306,8 @@ struct TransformCompleteImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
                                                               Next&& next) {
-    return next.ProcessComplete(
-        static_cast<OutputType>(f(UnwrapReference(input))));
+    return next.ProcessComplete(static_cast<OutputType>(
+        f(UnwrapReference(static_cast<InputType>(input)))));
   }
 };
 
