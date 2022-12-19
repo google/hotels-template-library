@@ -226,6 +226,26 @@ auto AllOf(Predicate predicate);
 template <typename Predicate>
 auto NoneOf(Predicate predicate);
 
+/*******************************************************************************
+* Only implementation details and dragons below here. **************************
+********************************************************************************
+                              ______________
+                        ,===:'.,            `-._
+Art by                       `:.`---.__         `-._
+ John VanderZwaag              `:.     `--.         `.
+                                 \.        `.         `.
+                         (,,(,    \.         `.   ____,-`.,
+                      (,'     `/   \.   ,--.___`.'
+                  ,  ,'  ,--.  `,   \.;'         `
+                   `{D, {    \  :    \;
+                     V,,'    /  /    //
+                     j;;    /  ,' ,-//.    ,---.      ,
+                     \;'   /  ,' /  _  \  /  _  \   ,'/
+                           \   `'  / \  `'  / \  `.' /
+                            `.___,'   `.__,'   `.__,'
+
+*******************************************************************************/
+
 namespace internal_htls_range {
 
 // Since CombinatorImpls have to take all type template parameters, we have to
@@ -247,6 +267,7 @@ struct ToCollectionImpl {
 
   Collection collection;
   Appender appender;
+
   template <typename... Args>
   explicit ToCollectionImpl(Appender appender, Args&&... args)
       : appender(std::move(appender)),
@@ -273,7 +294,7 @@ struct FilterImpl {
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
     if (f(UnwrapReference(input))) {
-      next.ProcessIncremental(input);
+      next.ProcessIncremental(static_cast<InputType>(input));
     }
   }
 };
@@ -412,20 +433,22 @@ struct FrontImpl {
 template <typename InputType>
 struct EnumerateImpl {
   using OutputType =
-      EnumeratedValue<decltype(UnwrapReference(std::declval<InputType>()))>;
+      EnumeratedValue<decltype(UnwrapReference(std::declval<InputType>()))>&&;
 
   size_t index = 0;
   template <typename T, typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
-    next.ProcessIncremental(
-        OutputType{index, UnwrapReference(std::forward<T>(t))});
+    next.ProcessIncremental(static_cast<OutputType>(
+        OutputType{index, UnwrapReference(std::forward<T>(t))}));
     ++index;
   }
 };
 
 template <typename InputType, typename Init, typename F>
 struct AccumulateInPlaceImpl {
-  using OutputType = Init;
+  static_assert(!std::is_lvalue_reference_v<Init> &&
+                !std::is_rvalue_reference_v<Init>);
+  using OutputType = Init&&;
 
   Init accumulated;
   F f;

@@ -298,6 +298,11 @@ class CombinatorTest : public testing::Test {
       EXPECT_THAT(value_, testing::Optional(m));
     }
   }
+  auto TransformToValueType() {
+    return Transform([](auto&& v) {
+      return typename T::value_type(std::forward<decltype(v)>(v));
+    });
+  }
 
  private:
   std::conditional_t<T::reference_style == ReferenceStyle::kLRef,
@@ -346,8 +351,8 @@ TYPED_TEST_P(CombinatorTest, TransformCompleteReturnValue) {
                 OnlyAllowlist<TypeParam,
                               ContainerWrapper<DequeContainer, PlainValue<int>,
                                                ReferenceStyle::kLRef>>()) {
-    auto result =
-        Apply(this->Make(), TransformComplete([](auto v) { return v; }));
+    auto tc = TransformComplete([](auto v) { return v; });
+    auto result = Apply(this->Make(), tc, tc);
     EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
   }
 }
@@ -379,6 +384,28 @@ TYPED_TEST_P(CombinatorTest, ToVectorMoveTest) {
   }
 }
 
+TYPED_TEST_P(CombinatorTest, MoveTransform) {
+  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValue<int>>>()) {
+    auto result = Apply(this->Make(), Move(),
+                        Transform([](typename TypeParam::value_type v) {
+                          return v.value() + 10;
+                        }),
+                        this->TransformToValueType(), ToVector());
+    this->InputMatches(TypeParam::Matches(1001, 1002, 1003));
+    EXPECT_THAT(result, TypeParam::Matches(11, 12, 13));
+  }
+}
+
+TYPED_TEST_P(CombinatorTest, FilterTest) {
+  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValue<int>>>()) {
+    auto result = Apply(
+        this->Make(), Move(),
+        Filter([](const auto& v) { return v.value() % 2 == 0; }), ToVector());
+    this->InputMatches(TypeParam::Matches(1, 1002, 3));
+    EXPECT_THAT(result, TypeParam::Matches(2));
+  }
+}
+
 REGISTER_TYPED_TEST_SUITE_P(CombinatorTest,                //
                             NoCombinators,                 //
                             NoCombinatorsCopy,             //
@@ -386,6 +413,8 @@ REGISTER_TYPED_TEST_SUITE_P(CombinatorTest,                //
                             TransformCompleteReturnValue,  //
                             ComposeSortTest,               //
                             ToVectorTest,                  //
+                            MoveTransform,                 //
+                            FilterTest,                    //
                             ToVectorMoveTest);
 
 using CombinatorTestTypeParameters = ::testing::Types<

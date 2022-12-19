@@ -30,13 +30,13 @@
 namespace htls::range {
 
 // Applies combinators.
-// Example:
-// std::vector<int> result = Apply(
-//   input_range, //
-//   Transform(&Foo::bar), //
-//   Transform([](int i){return 2 * i;}), //
-//   ToVector() //
-// );
+/* Example: ********************************************************************
+std::vector<int> result = Apply(std::vector{1, 2, 3, 4},                 //
+                                Transform(&Foo::bar),                    //
+                                Transform([](int i) { return 2 * i; }),  //
+                                ToVector()                               //
+);
+// ****************************************************************************/
 template <typename Range, typename... Combinators>
 decltype(auto) Apply(Range&& range, Combinators&&... combinators);
 
@@ -44,7 +44,25 @@ decltype(auto) Apply(Range&& range, Combinators&&... combinators);
 template <typename... Combinators>
 auto Compose(Combinators&&... combinators);
 
-// The following are needed to implement combinators:
+/*******************************************************************************
+* Only implementation details and dragons below here. **************************
+********************************************************************************
+                              ______________
+                        ,===:'.,            `-._
+Art by                       `:.`---.__         `-._
+ John VanderZwaag              `:.     `--.         `.
+                                 \.        `.         `.
+                         (,,(,    \.         `.   ____,-`.,
+                      (,'     `/   \.   ,--.___`.'
+                  ,  ,'  ,--.  `,   \.;'         `
+                   `{D, {    \  :    \;
+                     V,,'    /  /    //
+                     j;;    /  ,' ,-//.    ,---.      ,
+                     \;'   /  ,' /  _  \  /  _  \   ,'/
+                           \   `'  / \  `'  / \  `.' /
+                            `.___,'   `.__,'   `.__,'
+
+*******************************************************************************/
 
 // Whether a combinator's input or output is a range or value.
 enum class ProcessingStyle {
@@ -264,6 +282,12 @@ class CombinatorWrapper {
       typename CombinatorCreator::template Combinator<InputTypeParam>;
 
   using OutputType = typename Combinator::OutputType;
+  static_assert(std::is_lvalue_reference_v<InputType> ||
+                    std::is_rvalue_reference_v<InputType>,
+                "InputType must be a reference.");
+  static_assert(std::is_lvalue_reference_v<OutputType> ||
+                    std::is_rvalue_reference_v<OutputType>,
+                "OutputType must be a reference.");
 
   decltype(auto) Get(Index<I>) { return *this; }
   decltype(auto) Get(Index<I>) const { return *this; }
@@ -310,8 +334,10 @@ class CombinatorWrapper {
     return GetChain().AnyDone(Index<I>());
   }
 
+  // Only accept InputType with exactly matching reference type.
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t) {
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t) = delete;
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType t) {
     constexpr bool has_process_incremental =
         kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
 
@@ -330,38 +356,47 @@ class CombinatorWrapper {
     }
   }
 
-  template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
+  // Only accept InputType with exactly matching reference type.
+  template <
+      typename T,
+      ProcessingStyle input_style = CombinatorCreator::kInputProcessingStyle,
+      typename = std::enable_if_t<input_style == ProcessingStyle::kComplete>>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&&) = delete;
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType t) {
     constexpr bool has_process_complete =
         kHasProcessComplete<Combinator, InputType, decltype(Next())>;
+    static_assert(
+        has_process_complete,
+        "Combinator with complete processing style does not implement "
+        "ProcessComplete.");
+    if constexpr (has_process_complete) {
+      static_assert(!std::is_void_v<decltype(combinator_.ProcessComplete(
+                        static_cast<InputType>(t), Next()))>,
+                    "ProcessComplete must not return void.");
+      return combinator_.ProcessComplete(static_cast<InputType>(t), Next());
+    }
+  }
+  // If we need to do an implicit Complete->Incremental conversion, we don't
+  // care what the reference type of the argument is.
+  template <
+      typename T, typename = void,
+      ProcessingStyle input_style = CombinatorCreator::kInputProcessingStyle,
+      typename = std::enable_if_t<input_style == ProcessingStyle::kIncremental>>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
     constexpr bool has_process_incremental =
         kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
-    if constexpr (CombinatorCreator::kInputProcessingStyle ==
-                  ProcessingStyle::kComplete) {
+    for (InputType input : t) {
+      if (AnyDone()) break;
       static_assert(
-          has_process_complete,
-          "Combinator with complete processing style does not implement "
-          "ProcessComplete.");
-      if constexpr (has_process_complete) {
-        static_assert(!std::is_void_v<decltype(combinator_.ProcessComplete(
-                          static_cast<InputType>(t), Next()))>,
-                      "ProcessComplete must not return void.");
-        return combinator_.ProcessComplete(static_cast<InputType>(t), Next());
-      }
-    } else {
-      for (InputType input : t) {
-        if (AnyDone()) break;
-        static_assert(
-            has_process_incremental,
-            "Combinator with incremental processing style does not implement "
-            "ProcessIncremental.");
+          has_process_incremental,
+          "Combinator with incremental processing style does not implement "
+          "ProcessIncremental.");
 
-        if constexpr (has_process_incremental) {
-          combinator_.ProcessIncremental(static_cast<InputType>(input), Next());
-        }
+      if constexpr (has_process_incremental) {
+        combinator_.ProcessIncremental(static_cast<InputType>(input), Next());
       }
-      return End();
     }
+    return End();
   }
 
  private:
