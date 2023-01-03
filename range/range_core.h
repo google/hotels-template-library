@@ -93,36 +93,40 @@ template <typename T>
 using TypeIdentityT = typename std::decay_t<T>::type;
 
 // Used to create a combinator.
-// See FilterImpl and Filter function below for an example.
-// A combinator is of the form:
-// template<typename InputType>
-// struct IncrementalIdentityCombinator{
-//   using OutputType = InputType;
-//
-//   // Called with each element of the range.
-//   // One ProcessIncremental or ProcessComplete must be implemented.
-//   template<typename Next>
-//   void ProcessIncremental(InputType input, Next&& next){
-//     next.ProcessIncremental(t);
-//   }
-//
-//   // Called when all input has been passed. This is optional.
-//   template<typename Next>
-//   void End(Next&&){}
-//
-//   // Called to check whether previous combinators need to stop. Useful for
-//   // implementing Take.
-//   // This is optional.
-//   bool Done(){return false;}
-// };
+// See FilterImpl and Filter function in range_combinators.h for an example.
+// An (incremental) combinator is of the form:
+/* Example: ********************************************************************
+template <typename InputType>
+struct IncrementalIdentityCombinator {
+  using OutputType = InputType;
 
+  // Called with each element of the range.
+  // One of ProcessIncremental or ProcessComplete must be implemented.
+  template <typename Next>
+  void ProcessIncremental(InputType input, Next&& next) {
+    next.ProcessIncremental(t);
+  }
+
+  // Called when all input has been passed. This is optional.
+  template <typename Next>
+  void End(Next&&) {}
+
+  // Called to check whether previous combinators need to stop. Useful for
+  // implementing Take.
+  // This is optional.
+  bool Done() { return false; }
+};
+// ****************************************************************************/
+//
 // Then there is a function to return the combinator creator
-//  auto IncrementalIdentity(){
-//    return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-//        ProcessingStyle::kIncremental>([](auto type){
-//      return IncrementalIdentityCombinator<Type_t<decltype(type)>>{};
-//     });
-//  }
+/* Example: ********************************************************************
+auto IncrementalIdentity() {
+  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
+                               ProcessingStyle::kIncremental>([](auto type) {
+    return IncrementalIdentityCombinator<Type_t<decltype(type)>>{};
+  });
+}
+// ****************************************************************************/
 template <ProcessingStyle input_processing_style,
           ProcessingStyle output_processing_style,
           template <typename...> typename Combinator, typename... Parameters,
