@@ -406,6 +406,22 @@ TYPED_TEST_P(CombinatorTest, FilterTest) {
   }
 }
 
+TYPED_TEST_P(CombinatorTest, SortFilterDuplicates) {
+  if constexpr (OnlyAllowlist<TypeParam, AllValues<PlainValue<int>>>()) {
+    auto result =
+        Apply(this->Make({3, 2, 1, 3}), Sort(), FilterDuplicates(), ToVector());
+    EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
+  }
+}
+
+TYPED_TEST_P(CombinatorTest, SortMoveFilterDuplicates) {
+  if constexpr (SkipBlocklist<TypeParam, AllValues<NoMoveValue<int>>>()) {
+    auto result = Apply(this->Make({3, 2, 1, 3}), Sort(), Move(),
+                        FilterDuplicates(), ToVector());
+    EXPECT_THAT(result, TypeParam::Matches(1, 2, 3));
+  }
+}
+
 REGISTER_TYPED_TEST_SUITE_P(CombinatorTest,                //
                             NoCombinators,                 //
                             NoCombinatorsCopy,             //
@@ -415,6 +431,8 @@ REGISTER_TYPED_TEST_SUITE_P(CombinatorTest,                //
                             ToVectorTest,                  //
                             MoveTransform,                 //
                             FilterTest,                    //
+                            SortFilterDuplicates,          //
+                            SortMoveFilterDuplicates,      //
                             ToVectorMoveTest);
 
 using CombinatorTestTypeParameters = ::testing::Types<
@@ -715,12 +733,6 @@ TEST(TestOutputCombinators, SortUnique) {
   auto& result = Apply(v, Sort(), Unique());
   EXPECT_THAT(result, ElementsAre(1, 2, 3));
   EXPECT_THAT(&v, &result);
-}
-
-TEST(TestOutputCombinators, SortFilterDuplicates) {
-  std::vector<int> v{3, 2, 3, 1};
-  auto result = Apply(v, Sort(), FilterDuplicates(), ToVector());
-  EXPECT_THAT(result, ElementsAre(1, 2, 3));
 }
 
 TEST(TestOutputCombinators, SortTransformFilterDuplicates) {

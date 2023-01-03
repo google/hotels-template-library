@@ -301,11 +301,9 @@ struct FilterImpl {
 
 template <typename InputType, typename F>
 struct TransformImpl {
-  using InvokeResult =
-      std::invoke_result_t<F&, decltype(UnwrapReference(
-                                   std::declval<InputType>()))>;
   using OutputType =
-      decltype(std::forward<InvokeResult>(std::declval<InvokeResult>()));
+      std::invoke_result_t<F&, decltype(UnwrapReference(
+                                   std::declval<InputType>()))>&&;
   F f;
 
   template <typename Next>
@@ -327,8 +325,8 @@ struct TransformCompleteImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
                                                               Next&& next) {
-    return next.ProcessComplete(static_cast<OutputType>(
-        f(UnwrapReference(static_cast<InputType>(input)))));
+    return next.ProcessComplete(
+        f(UnwrapReference(static_cast<InputType>(input))));
   }
 };
 
@@ -343,40 +341,25 @@ struct FilterDuplicatesImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
-    if constexpr (std::is_lvalue_reference_v<InputType>) {
-      const bool has_value = test_element;
-      const bool is_equal = has_value && equal(UnwrapReference(input),
-                                               UnwrapReference(*test_element));
-
-      if (!is_equal) {
-        if (has_value) {
-          next.ProcessIncremental(*test_element);
-        }
-        test_element = &input;
+    const bool has_value(test_element);
+    const bool is_equal = has_value && equal(UnwrapReference(input),
+                                             UnwrapReference(*test_element));
+    if (!is_equal) {
+      if (has_value) {
+        next.ProcessIncremental(*std::move(test_element));
       }
-    } else {
-      const bool has_value = test_element.has_value();
-      const bool is_equal = has_value && equal(UnwrapReference(input),
-                                               UnwrapReference(*test_element));
-      if (!is_equal) {
-        if (has_value) {
-          next.ProcessIncremental(std::move(*test_element));
-        }
-        test_element = static_cast<InputType>(input);
+      if constexpr (std::is_lvalue_reference_v<InputType>) {
+        test_element = &input;
+      } else {
+        test_element.emplace(static_cast<InputType>(input));
       }
     }
   }
 
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
-    if constexpr (std::is_lvalue_reference_v<InputType>) {
-      if (test_element) {
-        next.ProcessIncremental(*test_element);
-      }
-    } else {
-      if (test_element.has_value()) {
-        next.ProcessIncremental(*std::move(test_element));
-      }
+    if (test_element) {
+      next.ProcessIncremental(*std::move(test_element));
     }
     return next.End();
   }
@@ -390,7 +373,7 @@ struct FlattenImpl {
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
     for (OutputType element : input) {
-      next.ProcessIncremental(static_cast<OutputType>(element));
+      next.ProcessIncremental(element);
     }
   }
 };
@@ -401,9 +384,10 @@ struct TakeImpl {
   size_t max_count;
   size_t count = 0;
 
-  template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
-    next.ProcessIncremental(std::forward<T>(t));
+  template <typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+                                                       Next&& next) {
+    next.ProcessIncremental(static_cast<InputType>(input));
     ++count;
   }
 
@@ -438,8 +422,8 @@ struct EnumerateImpl {
   size_t index = 0;
   template <typename T, typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
-    next.ProcessIncremental(static_cast<OutputType>(
-        OutputType{index, UnwrapReference(std::forward<T>(t))}));
+    next.ProcessIncremental(
+        OutputType{index, UnwrapReference(std::forward<T>(t))});
     ++index;
   }
 };
@@ -463,48 +447,6 @@ struct AccumulateInPlaceImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
     return next.ProcessComplete(std::move(accumulated));
-  }
-};
-
-template <typename InputType, typename Predicate>
-struct AllOfImpl {
-  using OutputType = bool&&;
-
-  Predicate predicate;
-
-  bool all_of = true;
-
-  template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
-                                                       Next&&) {
-    all_of = predicate(UnwrapReference(static_cast<InputType>(input)));
-  }
-
-  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return !all_of; }
-
-  template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
-    return next.ProcessComplete(static_cast<OutputType>(all_of));
-  }
-};
-
-template <typename InputType, typename Predicate>
-struct AnyOfImpl {
-  using OutputType = bool&&;
-
-  Predicate predicate;
-  bool any_of = false;
-
-  template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
-                                                       Next&&) {
-    any_of = predicate(UnwrapReference(static_cast<InputType>(input)));
-  }
-
-  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return any_of; }
-  template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
-    return next.ProcessComplete(static_cast<OutputType>(any_of));
   }
 };
 
@@ -638,15 +580,11 @@ inline auto Unenumerate() {
   auto un_enumerate = [](auto&& e) -> decltype(auto) {
     return e.ForwardValue();
   };
-  return Transform((un_enumerate));
+  return Transform(un_enumerate);
 }
 
 inline auto Ref() {
-  auto to_ref = [](auto&& r) {
-    static_assert(!std::is_rvalue_reference_v<decltype(r)>,
-                  "Attempting to call std::ref on a temporary.");
-    return std::ref(std::forward<decltype(r)>(r));
-  };
+  auto to_ref = [](auto&& r) { return std::ref(std::forward<decltype(r)>(r)); };
   return Transform(to_ref);
 }
 
@@ -702,25 +640,19 @@ auto ForEach(F f) {
       });
 }
 
-template <typename Predicate>
-auto AnyOf(Predicate predicate) {
-  return MakeCombinator<ProcessingStyle::kIncremental,
-                        ProcessingStyle::kComplete,
-                        internal_htls_range::AnyOfImpl, Predicate>(
-      std::move(predicate));
+template <typename F>
+auto AnyOf(F f) {
+  return Compose(Filter(std::move(f)), Take(1),
+                 Accumulate(false, [](auto&&...) { return true; }));
 }
-
-template <typename Predicate>
-auto AllOf(Predicate predicate) {
-  return MakeCombinator<ProcessingStyle::kIncremental,
-                        ProcessingStyle::kComplete,
-                        internal_htls_range::AllOfImpl, Predicate>(
-      std::move(predicate));
+template <typename F>
+auto NoneOf(F f) {
+  return Compose(AnyOf(std::move(f)),
+                 TransformComplete(+[](bool b) { return !b; }));
 }
-
-template <typename Predicate>
-auto NoneOf(Predicate predicate) {
-  return AllOf(std::not_fn(std::move(predicate)));
+template <typename F>
+auto AllOf(F f) {
+  return NoneOf(std::not_fn(std::move(f)));
 }
 
 }  // namespace htls::range
