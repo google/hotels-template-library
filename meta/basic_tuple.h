@@ -174,6 +174,10 @@ struct BasicTuple final : internal_basic_tuple::BasicTupleImpl<
     return std::make_index_sequence<sizeof...(Ts)>();
   }
 };
+template <typename... Ts>
+BasicTuple(const BasicTuple<Ts...>&) -> BasicTuple<Ts...>;
+template <typename... Ts>
+BasicTuple(BasicTuple<Ts...>&&) -> BasicTuple<Ts...>;
 
 // Makes a BasicTuple holding any number of values.
 //
