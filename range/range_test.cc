@@ -546,6 +546,132 @@ TEST(TestOutputCombinators, Enumerate) {
   EXPECT_THAT(result, ElementsAre(1, 2, 4));
 }
 
+TEST(TestOutputCombinators, Get0) {
+  std::vector<std::tuple<int, double>> v{
+      {1, 2.5}, {2, 3.5}, {3, 4.5}, {4, 5.5}};
+  auto result = Apply(v,          //
+                      Get<0>(),   //
+                      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(1, 2, 3, 4));
+}
+
+TEST(TestOutputCombinators, Get1) {
+  std::vector<std::tuple<int, double>> v{
+      {1, 2.5}, {2, 3.5}, {3, 4.5}, {4, 5.5}};
+  auto result = Apply(v,              //
+                      Get<double>(),  //
+                      ToVector()      //
+  );
+  EXPECT_THAT(result, ElementsAre(2.5, 3.5, 4.5, 5.5));
+}
+
+TEST(TestOutputCombinators, ZipWith) {
+  std::vector<int> v{1, 2, 3, 4};
+  std::vector<int> indices{0, 1, 2, 3};
+  auto index_not_equal_2 = [](auto&& t) { return std::get<1>(t) != 2; };
+  auto result = Apply(v,                 //
+                      ZipWith(indices),  //
+                      Filter(index_not_equal_2),
+                      Get<0>(),   //
+                      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(1, 2, 4));
+}
+
+TEST(TestOutputCombinators, ZipWithDifferentType) {
+  std::vector<double> v{1, 2, 3, 4};
+  std::vector<int> indices{0, 1, 2, 3};
+  auto index_not_equal_2 = [](auto&& t) { return std::get<1>(t) != 2; };
+  auto result = Apply(v,                 //
+                      ZipWith(indices),  //
+                      Filter(index_not_equal_2),
+                      Get<double&>(),  //
+                      ToVector()       //
+  );
+  static_assert(std::is_same_v<decltype(result), std::vector<double>>);
+  EXPECT_THAT(result, ElementsAre(1, 2, 4));
+}
+
+TEST(TestOutputCombinators, ZipWithShorterInput) {
+  std::vector<int> v{1, 2, 3, 4};
+  std::vector<int> indices{0, 1, 2, 3, 4};
+  auto index_not_equal_2 = [](auto&& t) { return std::get<1>(t) != 2; };
+  auto result = Apply(v,                 //
+                      ZipWith(indices),  //
+                      Filter(index_not_equal_2),
+                      Get<0>(),   //
+                      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(1, 2, 4));
+}
+
+TEST(TestOutputCombinators, ZipWithShorterRange) {
+  std::vector<int> v{1, 2, 3, 4};
+  std::vector<int> indices{0, 1, 2};
+  auto index_not_equal_2 = [](auto&& t) { return std::get<1>(t) != 2; };
+  auto result = Apply(v,                 //
+                      ZipWith(indices),  //
+                      Filter(index_not_equal_2),
+                      Get<0>(),   //
+                      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(1, 2));
+}
+
+TEST(TestOutputCombinators, ZipWithMultipleRangesChained) {
+  std::vector<int> v0{1, 2, 3, 4};
+  std::vector<int> v1{10, 20, 30, 40};
+  std::vector<int> v2{100, 200, 300, 400};
+  std::vector<int> indices{0, 1, 2, 3, 4};
+  auto result = Apply(
+      v0,                //
+      ZipWith(indices),  //
+      ZipWith(v1),       //
+      ZipWith(v2),       //
+      Transform([](auto&& t) -> int {
+        return std::apply([](auto&&... values) { return (values + ...); }, t);
+      }),         //
+      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(111, 223, 335, 447));
+}
+
+TEST(TestOutputCombinators, ZipWithMultipleRangesOverloads) {
+  std::vector<int> v0{1, 2, 3, 4};
+  std::vector<int> v1{10, 20, 30, 40};
+  std::vector<double> v2{100.5, 200.5, 300.5, 400.5};
+  std::vector<int> indices{0, 1, 2, 3, 4};
+  auto result = Apply(
+      v0,                        //
+      ZipWith(indices, v1, v2),  //
+      Transform([](auto&& t) -> int {
+        return std::apply([](auto&&... values) { return (values + ...); }, t);
+      }),         //
+      ToVector()  //
+  );
+  EXPECT_THAT(result, ElementsAre(111, 223, 335, 447));
+}
+
+TEST(TestOutputCombinators, ZipWithMoveOnly) {
+  std::vector<double> v{1, 2, 3, 4};
+  std::vector<std::unique_ptr<int>> indices;
+  indices.emplace_back(std::make_unique<int>(0));
+  indices.emplace_back(std::make_unique<int>(1));
+  indices.emplace_back(std::make_unique<int>(2));
+  indices.emplace_back(std::make_unique<int>(3));
+
+  auto index_not_equal_2 = [](auto&& t) { return *std::get<1>(t) != 2; };
+  auto result = Apply(v,                 //
+                      ZipWith(indices),  //
+                      Filter(index_not_equal_2),
+                      Get<double&>(),  //
+                      ToVector()       //
+  );
+  static_assert(std::is_same_v<decltype(result), std::vector<double>>);
+  EXPECT_THAT(result, ElementsAre(1, 2, 4));
+}
+
 TEST(TestOutputCombinators, FrontLValue) {
   std::vector<int> v{1, 2, 3};
   auto result = Apply(v,       //

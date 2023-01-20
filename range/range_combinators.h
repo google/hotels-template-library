@@ -175,10 +175,28 @@ EnumeratedValue(size_t, R) -> EnumeratedValue<R>;
 // Out: Incremental
 inline auto Enumerate();
 
+// Zips with other range(s).
+// In: Incremental
+// Out: Incremental
+template <typename... Ranges>
+auto ZipWith(Ranges&&... ranges);
+
 // Transforms `EnumeratedValue`s into just the values.
 // In: Incremental
 // Out: Incremental
 inline auto Unenumerate();
+
+// Gets the element of Tuple
+// In: Incremental
+// Out: Incremental
+template <size_t I>
+decltype(auto) Get();
+
+// Gets the element of Tuple
+// In: Incremental
+// Out: Incremental
+template <typename T>
+decltype(auto) Get();
 
 // Calls f for each value and returns the number of times f was called.
 // In: Incremental
@@ -428,6 +446,32 @@ struct EnumerateImpl {
   }
 };
 
+template <typename InputType, typename Iterator, typename EndIterator>
+struct ZipWithImpl {
+  template <typename T>
+  static decltype(auto) WrapInTuple(T&& t) {
+    if constexpr (decltype(internal_htls_range::IsTuple(t))::value) {
+      return std::forward<T>(t);
+    } else {
+      return std::forward_as_tuple(std::forward<T>(t));
+    }
+  }
+  using OutputType =
+      decltype(std::tuple_cat(WrapInTuple(std::declval<InputType>()),
+                              WrapInTuple(*std::declval<Iterator>())))&&;
+
+  Iterator iterator{};
+  EndIterator end_iterator{};
+  template <typename T, typename Next>
+  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
+    next.ProcessIncremental(std::tuple_cat(WrapInTuple(std::forward<T>(t)),
+                                           WrapInTuple(*iterator)));
+    ++iterator;
+  }
+
+  bool Done() const { return iterator == end_iterator; }
+};
+
 template <typename InputType, typename Init, typename F>
 struct AccumulateInPlaceImpl {
   static_assert(!std::is_lvalue_reference_v<Init> &&
@@ -576,11 +620,41 @@ inline auto Enumerate() {
                         ProcessingStyle::kIncremental,
                         internal_htls_range::EnumerateImpl>();
 }
+
+template <typename... Ranges>
+auto ZipWith(Ranges&&... ranges) {
+  auto make_combinator = [](auto&& range) {
+    return MakeCombinator<ProcessingStyle::kIncremental,
+                          ProcessingStyle::kIncremental,
+                          internal_htls_range::ZipWithImpl,
+                          decltype(range.begin()), decltype(range.end())>(
+        range.begin(), range.end());
+  };
+
+  return Compose(make_combinator(std::forward<Ranges>(ranges))...);
+}
+
 inline auto Unenumerate() {
   auto un_enumerate = [](auto&& e) -> decltype(auto) {
     return e.ForwardValue();
   };
   return Transform(un_enumerate);
+}
+
+template <size_t I>
+decltype(auto) Get() {
+  return Transform([](auto&& tuple) -> decltype(auto) {
+    using std::get;
+    return get<I>(std::forward<decltype(tuple)>(tuple));
+  });
+}
+
+template <typename T>
+decltype(auto) Get() {
+  return Transform([](auto&& tuple) -> decltype(auto) {
+    using std::get;
+    return get<T>(std::forward<decltype(tuple)>(tuple));
+  });
 }
 
 inline auto Ref() {
