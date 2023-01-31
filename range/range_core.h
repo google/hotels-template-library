@@ -97,7 +97,8 @@ using TypeIdentityT = typename std::decay_t<T>::type;
 // An (incremental) combinator is of the form:
 /* Example: ********************************************************************
 template <typename InputType>
-struct IncrementalIdentityCombinator {
+struct IncrementalIdentityImpl {
+  // Note: InputType and OutputType are reference types.
   using OutputType = InputType;
 
   // Called with each element of the range.
@@ -109,7 +110,9 @@ struct IncrementalIdentityCombinator {
 
   // Called when all input has been passed. This is optional.
   template <typename Next>
-  void End(Next&&) {}
+  decltype(auto) End(Next&& next) {
+    return next.ProcessComplete(...);
+  }
 
   // Called to check whether previous combinators need to stop. Useful for
   // implementing Take.
@@ -118,13 +121,12 @@ struct IncrementalIdentityCombinator {
 };
 // ****************************************************************************/
 //
-// Then there is a function to return the combinator creator
+// Then there is a function to return the combinator:
 /* Example: ********************************************************************
 auto IncrementalIdentity() {
-  return MakeCombinatorCreator<ProcessingStyle::kIncremental,
-                               ProcessingStyle::kIncremental>([](auto type) {
-    return IncrementalIdentityCombinator<Type_t<decltype(type)>>{};
-  });
+  return MakeCombinator<ProcessingStyle::kIncremental,
+                        ProcessingStyle::kIncremental,
+                        IncrementalIdentiyImpl>();
 }
 // ****************************************************************************/
 template <ProcessingStyle input_processing_style,
