@@ -40,39 +40,41 @@ struct FakeCompatibility {
 // friend declaration requires this definition is in the internal namespace.
 struct HaversackTestUtil {
   template <
-      typename... HaversackTs, typename... Args,
+      typename HaversackT, typename... SubHaversackTs, typename... Args,
       typename = std::enable_if_t<
-          sizeof...(HaversackTs) != 0 &&
-          (... && internal::IsHaversack(htls::meta::type_c<HaversackTs>))>>
-  static auto MakeFakeHaversack(Args&&... args) {
+          internal::IsHaversack(htls::meta::type_c<HaversackT>) &&
+          (... && internal::IsHaversack(htls::meta::type_c<SubHaversackTs>))>>
+  static HaversackT MakeFakeHaversack(Args&&... args) {
 #if HAVERSACK_GET_TESTER_MODE == 1
     // If HAVERSACK_GET_TESTER_MODE is on mode 1, create a haversack that is all
     // nullptrs since we don't want to define the intermediate Haversack type
     // with direct dependencies since those direct dependencies would cause
     // hashes to be asserted on.
-    using ResultT = Haversack<Deps<HaversackTs>...>;
-    return ResultT(internal::CtorSentinel(), FakeCompatibility(),
-                   typename decltype(TraitsOf(htls::meta::type_c<ResultT>)
-                                         .MemberTupleType())::type());
+    return HaversackT(internal::CtorSentinel(), FakeCompatibility(),
+                      typename decltype(TraitsOf(htls::meta::type_c<HaversackT>)
+                                            .MemberTupleType())::type());
 #else
     // Haversack containing only the direct dependencies to HaversackT.
+    // Also, any direct dependencies in SubHaversackTs that are in HaversackT.
+    // This specifically doesn't include dependencies that are Provided
+    // somewhere.
     constexpr auto direct_type_set =
-        (... | TraitsOf(htls::meta::type_c<HaversackTs>).direct);
+        TraitsOf(htls::meta::type_c<HaversackT>).direct |
+        (htls::meta::MakeTypeSet() | ... |
+         (TraitsOf(htls::meta::type_c<SubHaversackTs>).direct &
+          TraitsOf(htls::meta::type_c<HaversackT>).all_deps));
     using RequiredTypesHaversack =
         typename decltype(htls::meta::FromTuple<Haversack>(
             direct_type_set.Tuple()))::type;
     auto direct_deps_haversack =
         RequiredTypesHaversack(std::forward<Args>(args)...);
 
-    constexpr auto all_deps_type_set =
-        (... | TraitsOf(htls::meta::type_c<HaversackTs>).all_deps);
-    using AllTypesHaversack =
-        typename decltype(htls::meta::FromTuple<Haversack>(
-            all_deps_type_set.Tuple()))::type;
-    // Instance of AllTypesHaversack, initially only containing nullptrs.
-    auto result = AllTypesHaversack(
+    using AllDepsHaversack = typename decltype(htls::meta::FromTuple<Haversack>(
+        TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
+    // Instance of AllDepsHaversack, initially only containing nullptrs.
+    auto result = AllDepsHaversack(
         internal::CtorSentinel(), FakeCompatibility(),
-        typename decltype(TraitsOf(htls::meta::type_c<AllTypesHaversack>)
+        typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
                               .MemberTupleType())::type());
 
     // Copy direct dependencies over from direct_deps_haversack into result.
@@ -86,8 +88,7 @@ struct HaversackTestUtil {
                     *direct_ptr->members_))),
            ...);
         },
-        htls::meta::AsTuple(
-            htls::meta::Type(*direct_deps_haversack.members_)));
+        htls::meta::AsTuple(htls::meta::Type(*direct_deps_haversack.members_)));
     return result;
 #endif
   }

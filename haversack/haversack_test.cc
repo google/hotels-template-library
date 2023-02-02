@@ -573,6 +573,15 @@ TEST(FakeHaversack, MakeFakeHaversackPropagate) {
   EXPECT_EQ(d.Get<D>().i, 3);
 }
 
+TEST(FakeHaversack, MakeFakeHaversackWithProvides) {
+  FHSack cxt = MakeFakeHaversack<FHSack, GHSack>(
+      std::make_unique<F>(1), std::make_unique<O>(2), std::make_unique<L>(3));
+  GHSack g(cxt, std::make_unique<G>(4));
+  EXPECT_EQ(cxt.Get<F>().i, 1);
+  EXPECT_EQ(g.Get<L>().i, 3);
+  EXPECT_EQ(g.Get<G>().i, 4);
+}
+
 TEST(HaversackConversion, CanConvertToSubset) {
   Haversack<A, B> sack(std::make_unique<A>(1), std::make_unique<B>(2));
   Haversack<A> child = sack;
