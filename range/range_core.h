@@ -70,18 +70,6 @@ enum class ProcessingStyle {
   kComplete,
 };
 
-// Unwraps std::reference_wrapper or else returns the reference.
-template <typename T>
-ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) UnwrapReference(
-    std::reference_wrapper<T> ref) {
-  return ref.get();
-}
-
-template <typename T>
-ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) UnwrapReference(T&& ref) {
-  return std::forward<T>(ref);
-}
-
 // Struct to treat types as values.
 template <typename T>
 struct TypeIdentity {

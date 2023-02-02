@@ -91,9 +91,7 @@ template <template <typename...> typename Collection,
 auto ToCollection(Appender appender, Args&&... args);
 
 // Yields the first incremental input as a complete value.
-// If the element is an l-value or r-value reference, it will be converted to a
-// value. If it is reference_wrapper, it will be returned as an l-value
-// reference.
+// The input will be converted to a value then moved out.
 /* Example: ********************************************************************
 std::vector v{1, 2, 3, 4};
 int result = Apply(v, Front());                      // result == 1
@@ -186,16 +184,21 @@ auto ZipWith(Ranges&&... ranges);
 // Out: Incremental
 inline auto Unenumerate();
 
-// Gets the element of Tuple
+// Gets the element of Tuple.
 // In: Incremental
 // Out: Incremental
 template <size_t I>
 decltype(auto) Get();
 
-// Gets the element of Tuple
+// Gets the element of Tuple.
 // In: Incremental
 // Out: Incremental
 template <typename T>
+decltype(auto) Get();
+
+// Calls the `.get()` method on the input.
+// In: Incremental
+// Out: Incremental
 decltype(auto) Get();
 
 // Calls f for each value and returns the number of times f was called.
@@ -311,7 +314,7 @@ struct FilterImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
-    if (f(UnwrapReference(input))) {
+    if (f(input)) {
       next.ProcessIncremental(static_cast<InputType>(input));
     }
   }
@@ -320,15 +323,13 @@ struct FilterImpl {
 template <typename InputType, typename F>
 struct TransformImpl {
   using OutputType =
-      std::invoke_result_t<F&, decltype(UnwrapReference(
-                                   std::declval<InputType>()))>&&;
+      std::invoke_result_t<F&, decltype(std::declval<InputType>())>&&;
   F f;
 
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
-    next.ProcessIncremental(
-        std::invoke(f, UnwrapReference(static_cast<InputType>(input))));
+    next.ProcessIncremental(std::invoke(f, static_cast<InputType>(input)));
   }
 };
 
@@ -343,8 +344,7 @@ struct TransformCompleteImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
                                                               Next&& next) {
-    return next.ProcessComplete(
-        f(UnwrapReference(static_cast<InputType>(input))));
+    return next.ProcessComplete(f(static_cast<InputType>(input)));
   }
 };
 
@@ -360,8 +360,7 @@ struct FilterDuplicatesImpl {
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&& next) {
     const bool has_value(test_element);
-    const bool is_equal = has_value && equal(UnwrapReference(input),
-                                             UnwrapReference(*test_element));
+    const bool is_equal = has_value && equal(input, *test_element);
     if (!is_equal) {
       if (has_value) {
         next.ProcessIncremental(*std::move(test_element));
@@ -414,8 +413,7 @@ struct TakeImpl {
 
 template <typename InputType>
 struct FrontImpl {
-  using OutputType =
-      decltype(UnwrapReference(std::move(std::declval<InputType>())));
+  using OutputType = std::decay_t<InputType>&&;
 
   std::optional<std::decay_t<InputType>> element;
 
@@ -428,20 +426,18 @@ struct FrontImpl {
 
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
-    return next.ProcessComplete(UnwrapReference(std::move(*element)));
+    return next.ProcessComplete(std::move(*element));
   }
 };
 
 template <typename InputType>
 struct EnumerateImpl {
-  using OutputType =
-      EnumeratedValue<decltype(UnwrapReference(std::declval<InputType>()))>&&;
+  using OutputType = EnumeratedValue<decltype(std::declval<InputType>())>&&;
 
   size_t index = 0;
   template <typename T, typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
-    next.ProcessIncremental(
-        OutputType{index, UnwrapReference(std::forward<T>(t))});
+    next.ProcessIncremental(OutputType{index, std::forward<T>(t)});
     ++index;
   }
 };
@@ -484,8 +480,7 @@ struct AccumulateInPlaceImpl {
   template <typename Next>
   ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
                                                        Next&&) {
-    f(UnwrapReference(accumulated),
-      UnwrapReference(static_cast<InputType>(input)));
+    f(accumulated, static_cast<InputType>(input));
   }
 
   template <typename Next>
@@ -498,12 +493,6 @@ struct AddressOfFunctor {
   template <typename T>
   ABSL_ATTRIBUTE_ALWAYS_INLINE T* operator()(T& t) const {
     return &t;
-  }
-
-  template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE T* operator()(
-      std::reference_wrapper<T> r) const {
-    return &r.get();
   }
 };
 
@@ -561,10 +550,7 @@ template <typename Comparator>
 auto Sort(Comparator comparator) {
   auto sort = [comparator =
                    std::move(comparator)](auto&& range) -> decltype(auto) {
-    auto unwrapped_comparator = [&](auto& a, auto& b) {
-      return comparator(UnwrapReference(a), UnwrapReference(b));
-    };
-    std::sort(range.begin(), range.end(), unwrapped_comparator);
+    std::sort(range.begin(), range.end(), comparator);
     return std::forward<decltype(range)>(range);
   };
   return TransformComplete(sort);
@@ -573,10 +559,7 @@ template <typename Equality>
 auto Unique(Equality equality) {
   auto unique = [equality =
                      std::move(equality)](auto&& range) -> decltype(auto) {
-    auto unwrapped_equality = [&](auto& a, auto& b) {
-      return equality(UnwrapReference(a), UnwrapReference(b));
-    };
-    auto last = std::unique(range.begin(), range.end(), unwrapped_equality);
+    auto last = std::unique(range.begin(), range.end(), equality);
     if constexpr (decltype(internal_htls_range::HasRemoveSuffix(
                       range))::value) {
       range.remove_suffix(std::distance(last, range.end()));
@@ -657,20 +640,27 @@ decltype(auto) Get() {
   });
 }
 
+inline decltype(auto) Get() {
+  auto get = [](auto&& r) -> decltype(auto) {
+    return std::forward<decltype(r)>(r).get();
+  };
+  return Transform(get);
+}
+
 inline auto Ref() {
   auto to_ref = [](auto&& r) { return std::ref(std::forward<decltype(r)>(r)); };
   return Transform(to_ref);
 }
 
 inline auto Move() {
-  auto move = [](auto& r) -> decltype(auto) {
-    return std::move(UnwrapReference(r));
-  };
+  auto move = [](auto& r) -> decltype(auto) { return std::move(r); };
   return Transform(move);
 }
 
 inline auto LRef() {
-  auto lref = [](auto&& r) -> decltype(auto) { return UnwrapReference(r); };
+  auto lref = [](auto&& r) -> decltype(auto) {
+    return static_cast<decltype(r)&>(r);
+  };
   return Transform(lref);
 }
 
@@ -680,7 +670,7 @@ inline auto AddressOf() {
 
 inline auto Deref() {
   auto deref = [](auto&& r) -> decltype(auto) {
-    return *UnwrapReference(std::forward<decltype(r)>(r));
+    return *std::forward<decltype(r)>(r);
   };
   return Transform(deref);
 }

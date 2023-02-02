@@ -688,19 +688,17 @@ TEST(TestOutputCombinators, FrontLValue) {
 
 TEST(TestOutputCombinators, FrontRef) {
   std::vector<int> v{1, 2, 3};
-  auto& result = Apply(v,  //
-                       Ref(),
-                       Front()  //
-  );
+  int& result = Apply(v,      //
+                      Ref(),  //
+                      Front());
 
   EXPECT_THAT(result, 1);
   EXPECT_THAT(&result, &v[0]);
 
-  static_assert(std::is_same_v<decltype(Apply(v,  //
-                                              Ref(),
-                                              Front()  //
-                                              )),
-                               int&>);
+  static_assert(std::is_same_v<decltype(Apply(v,      //
+                                              Ref(),  //
+                                              Front())),
+                               std::reference_wrapper<int>>);
 }
 
 TEST(TestOutputCombinators, FrontRValue) {
@@ -745,7 +743,6 @@ TEST(TestOutputCombinators, TakeToMoveVector) {
   std::vector<std::string> v{"Hello", "World", "John"};
   auto result = Apply(v,          //
                       Take(2),    //
-                      Ref(),      //
                       Move(),     //
                       ToVector()  //
   );
@@ -759,7 +756,6 @@ TEST(TestOutputCombinators, TakeToMoveLRefVector) {
   std::vector<std::string> v{"Hello", "World", "John"};
   auto result = Apply(v,          //
                       Take(2),    //
-                      Ref(),      //
                       Move(),     //
                       LRef(),     //
                       ToVector()  //
@@ -1205,12 +1201,13 @@ TEST(TestOutputCombinators, ImmovableTypeSortRef) {
   list.emplace_back(3);
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
-  auto greater = [](auto& a, auto& b) { return a.value > b.value; };
+  auto greater = [](auto* a, auto* b) { return a->value > b->value; };
   auto result = Apply(list,                             //
                       Filter(odds),                     //
-                      Ref(),                            //
+                      AddressOf(),                      //
                       ToVector(),                       //
                       Sort(greater),                    //
+                      Deref(),                          //
                       Transform(&ImmovableInt::value),  //
                       ToVector()                        //
   );
@@ -1274,12 +1271,15 @@ TEST(TestOutputCombinators, MoveOnlyTypeRefSortMove) {
   v.emplace_back(3);
 
   auto odds = [](auto& i) { return i.value % 2 == 1; };
-  auto greater = [](auto& a, auto& b) { return a.value > b.value; };
+  auto greater = [](MoveOnlyInt& a, MoveOnlyInt& b) {
+    return a.value > b.value;
+  };
   auto result = Apply(v,              //
                       Filter(odds),   //
                       Ref(),          //
                       ToVector(),     //
                       Sort(greater),  //
+                      Get(),          //
                       Move(),         //
                       ToVector()      //
   );
