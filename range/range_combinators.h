@@ -1,4 +1,4 @@
-// Copyright 2022 Google LLC
+// Copyright 2023 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
+// IWYU pragma: private, include "third_party/hotels_template_library/range/range.h"
 
 #ifndef THIRD_PARTY_HOTELS_TEMPLATE_LIBRARY_RANGE_RANGE_COMBINATORS_H_
 #define THIRD_PARTY_HOTELS_TEMPLATE_LIBRARY_RANGE_RANGE_COMBINATORS_H_
@@ -704,19 +706,19 @@ auto ForEach(F f) {
       });
 }
 
-template <typename F>
-auto AnyOf(F f) {
-  return Compose(Filter(std::move(f)), Take(1),
+template <typename Predicate>
+auto AnyOf(Predicate predicate) {
+  return Compose(Filter(std::move(predicate)), Take(1),
                  Accumulate(false, [](auto&&...) { return true; }));
 }
-template <typename F>
-auto NoneOf(F f) {
-  return Compose(AnyOf(std::move(f)),
+template <typename Predicate>
+auto NoneOf(Predicate predicate) {
+  return Compose(AnyOf(std::move(predicate)),
                  TransformComplete(+[](bool b) { return !b; }));
 }
-template <typename F>
-auto AllOf(F f) {
-  return NoneOf(std::not_fn(std::move(f)));
+template <typename Predicate>
+auto AllOf(Predicate predicate) {
+  return NoneOf(std::not_fn(std::move(predicate)));
 }
 
 }  // namespace htls::range
