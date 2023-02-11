@@ -1033,7 +1033,7 @@ struct GetSharedHelper {
     return value;
   }
   // Returns a Type<U> where U is the WrappedType in the Haversack that T
-  // matches. If there is no match, it returns void (note Type<void>).
+  // matches. If there is no match, it returns Type<void>.
   constexpr static auto GetMatchingWrappedType() {
     if constexpr (Contains(htls::meta::type_c<T>,
                            TraitsOf(htls::meta::type_c<HaversackT>).direct)) {
@@ -1048,6 +1048,8 @@ struct GetSharedHelper {
       if constexpr (size(matching_tags) == 1) {
         htls::meta::Type real_type = htls::meta::get<0>(matching_tags);
         return real_type;
+      } else {
+        return htls::meta::type_c<void>;
       }
     }
   }

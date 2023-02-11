@@ -82,10 +82,23 @@
 #include <tuple>
 #include <type_traits>
 
-#include "meta/basic_tuple.h"
 #include "haversack/internal/haversack_impl.h"
+#include "meta/basic_tuple.h"
 #include "meta/type.h"
 #include "meta/type_set.h"
+
+#ifndef HTLS_NO_DUNDER_ATTRIBUTE
+
+#define HTLS_UNAVAILABLE_ATTRIBUTE(...) \
+  __attribute__((unavailable(__VA_ARGS__)))
+#define HTLS_ENABLE_IF_ATTRIBUTE(...) __attribute__((enable_if(__VA_ARGS__)))
+
+#else
+
+#define HTLS_UNAVAILABLE_ATTRIBUTE(...) = delete;
+#define HTLS_ENABLE_IF_ATTRIBUTE(...)
+
+#endif
 
 namespace hotels::haversack {
 
@@ -139,12 +152,11 @@ class Haversack {
   //
   // Note: This ctor is only enabled if args is non-empty so we
   // can ignore the warning about explicit unary ctors.
-  template <
-      typename OtherHaversack, typename... UncoercedCtorArgs,
-      typename = std::enable_if_t<
-          internal::IsHaversack(htls::meta::type_c<OtherHaversack>) &&
-          std::greater<>()(sizeof...(UncoercedCtorArgs), 0) &&
-          (... && internal::kIsValidCtorArg<UncoercedCtorArgs>)>>
+  template <typename OtherHaversack, typename... UncoercedCtorArgs,
+            typename = std::enable_if_t<
+                internal::IsHaversack(htls::meta::type_c<OtherHaversack>) &&
+                std::greater<>()(sizeof...(UncoercedCtorArgs), 0) &&
+                (... && internal::kIsValidCtorArg<UncoercedCtorArgs>)>>
   Haversack(OtherHaversack cxt,
             UncoercedCtorArgs... args)  // NOLINT
       : Haversack(CtorSentinel(),
@@ -156,12 +168,9 @@ class Haversack {
                   *std::move(cxt).members_,
                   internal::CoerceCtorArg(std::move(args))...) {}
 
-  // This ctor is only selected if the arguments are (incorrectly) not pointers.
-  // This ctor always has a static_assert failure to make it more clear to end
-  // users of what went wrong.
-  //
-  // Note: The rest of the ctor pretends that everything is good to prevent a
-  // bunch of erroneous errors from being emitted.
+  // Honeypot overload for when the arguments are (incorrectly) not pointers.
+  // We use the 'unavailable' attribute to give a better compiler error than
+  // just 'method is deleted'.
   template <typename First, typename... Rest,
             bool kAnyInvalidCtorArgs =
                 // Any of the "rest" of the arguments are not valid,
@@ -172,14 +181,9 @@ class Haversack {
              !internal::IsHaversack(htls::meta::type_c<First>)),
             typename = std::enable_if_t<kAnyInvalidCtorArgs>>
   Haversack(First, Rest...)  // NOLINT
-      : Haversack(CtorSentinel(),
-                  Traits().CtorCompatibility(HaversackT::Traits().all_deps,
-                                             htls::meta::MakeBasicTuple()),
-                  typename decltype(Traits().MemberTupleType())::type()) {
-    static_assert(!kAnyInvalidCtorArgs,
-                  "One of the Haversack constructor arguments wasn't a pointer "
-                  "when it should have been (or it wasn't supported pointer).");
-  }
+      HTLS_UNAVAILABLE_ATTRIBUTE(
+          "One of the Haversack constructor arguments wasn't a pointer "
+          "when it should have been (or it wasn't a supported pointer).");
 
   // A Haversack can be converted to any other Haversack type that contains a
   // subset of the member types.
@@ -221,12 +225,11 @@ class Haversack {
   // Get shared ownership to the T member. The returned value is never null.
   //
   // Prefer the Get method unless the shared ownership is required.
-  template <
-      typename T,
-      typename GetSharedHelper = internal::GetSharedHelper<T, Haversack>,
-      typename = std::enable_if_t<GetSharedHelper::GetMatchingWrappedType() !=
-                                  htls::meta::type_c<void>>>
-  [[nodiscard]] decltype(auto) GetShared() const {
+  template <typename T,
+            typename GetSharedHelper = internal::GetSharedHelper<T, Haversack>>
+  [[nodiscard]] decltype(auto) GetShared() const HTLS_ENABLE_IF_ATTRIBUTE(
+      GetSharedHelper::GetMatchingWrappedType() != htls::meta::type_c<void>,
+      "Requested type is not a direct dependency in the Haversack.") {
     return GetSharedHelper::Get(*members_);
   }
 
@@ -234,12 +237,11 @@ class Haversack {
   //
   // If T matches KnownThreadSafe<U>, a mutable `U&` is returned;
   // otherwise a `const T&` reference is returned.
-  template <
-      typename T,
-      typename GetSharedHelper = internal::GetSharedHelper<T, Haversack>,
-      typename = std::enable_if_t<GetSharedHelper::GetMatchingWrappedType() !=
-                                  htls::meta::type_c<void>>>
-  [[nodiscard]] decltype(auto) Get() const {
+  template <typename T,
+            typename GetSharedHelper = internal::GetSharedHelper<T, Haversack>>
+  [[nodiscard]] decltype(auto) Get() const HTLS_ENABLE_IF_ATTRIBUTE(
+      GetSharedHelper::GetMatchingWrappedType() != htls::meta::type_c<void>,
+      "Requested type is not a direct dependency in the Haversack.") {
     if constexpr (internal::IsNullable(
                       GetSharedHelper::GetMatchingWrappedType())) {
       return GetShared<T>().get();
@@ -585,5 +587,8 @@ auto MakeTagged(UncoercedCtorArg arg) {
 }
 
 }  // namespace hotels::haversack
+
+#undef HTLS_UNAVAILABLE_ATTRIBUTE
+#undef HTLS_ENABLE_IF_ATTRIBUTE
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_H_

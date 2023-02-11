@@ -624,7 +624,7 @@ TEST(HaversackCtor, CannotConstToKnownThreadSafe) {
 TEST(HaversackCtor, NonPtrArgumentsGiveGoodMessage) {
   EXPECT_NON_COMPILE(
       "One of the Haversack constructor arguments wasn't a pointer when it "
-      "should have been .or it wasn't supported pointer..",
+      "should have been .or it wasn't a supported pointer..",
       { Haversack<A> sack(A{}); });
 }
 
@@ -818,6 +818,18 @@ TEST(Haversack, GetSharedNoCopy) {
   const std::shared_ptr<const A>& first = deps.GetShared<A>();
   const std::shared_ptr<const A>& second = deps.GetShared<A>();
   EXPECT_EQ(&first, &second);
+}
+
+TEST(GoodCompilerErrors, Get) {
+  EXPECT_NON_COMPILE(
+      "Requested type is not a direct dependency in the Haversack.",
+      (void)Haversack<>().Get<B>());
+}
+
+TEST(GoodCompilerErrors, GetShared) {
+  EXPECT_NON_COMPILE(
+      "Requested type is not a direct dependency in the Haversack.",
+      (void)Haversack<>().GetShared<B>());
 }
 
 }  // namespace
