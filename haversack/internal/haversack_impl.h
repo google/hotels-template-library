@@ -685,6 +685,8 @@ constexpr auto GetTypesFromProvides(
 // - AllDepsT is a TypeSet of all of the types which are dependencies of the
 // associated Haversack (direct and indirect) that are not provided by this
 // Haversack or a descendant Haversack.
+// - ProvidedDepsT is a TypeSet of all of the types which are provided directly
+// by this Haversack.
 // - ChildHaversacksT is a TypeSet of all the child haversack types as
 // `ChildHaversackMetadata` template instances.
 // - BuilderSuccessT is a std::bool_constant which is std::true_type iff all the
@@ -693,11 +695,12 @@ constexpr auto GetTypesFromProvides(
 // static_assert does not stop compilation automatically so we explicitly skip
 // the rest of the validation if we htls::meta::get any failures.
 // - All the types in the sets are WrappedTypes.
-template <typename DirectDepsT, typename AllDepsT, typename ChildHaversacksT,
+template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT, typename ChildHaversacksT,
           typename BuilderSuccessT>
 struct HaversackTraits {
   DirectDepsT direct;
   AllDepsT all_deps;
+  ProvidedDepsT provided_deps;
   ChildHaversacksT child_haversacks;
   using BuilderSuccessType = BuilderSuccessT;
 
@@ -731,16 +734,17 @@ struct HaversackTraits {
         },
         all_deps.Tuple()));
   }
-  constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps,
+  constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps, ProvidedDepsT provided_deps,
                             ChildHaversacksT child_haversacks, BuilderSuccessT)
       : direct(direct),
         all_deps(all_deps),
+        provided_deps(provided_deps),
         child_haversacks(child_haversacks) {}
 };
-template <typename DirectDepsT, typename AllDepsT, typename ChildHaversacksT,
+template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT, typename ChildHaversacksT,
           typename BuilderSuccessT>
-HaversackTraits(DirectDepsT, AllDepsT, ChildHaversacksT, BuilderSuccessT)
-    -> HaversackTraits<DirectDepsT, AllDepsT, ChildHaversacksT,
+HaversackTraits(DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT, BuilderSuccessT)
+    -> HaversackTraits<DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
                        BuilderSuccessT>;
 
 // Holds the different sets of types, organized into different categories.
@@ -834,7 +838,7 @@ struct HaversackTraitsBuilder {
     using BuilderSuccessT = std::bool_constant<
         no_direct_deps_are_provided && indirect_deps_is_superset_of_provides &&
         all_direct_deps_unique && all_tags_unique && no_tags_as_deps>;
-    return HaversackTraits(direct_dep_set, dep_set - provide_set,
+    return HaversackTraits(direct_dep_set, dep_set - provide_set, provide_set,
                            make_type_set(self.child_haversacks),
                            BuilderSuccessT());
   }
