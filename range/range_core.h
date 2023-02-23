@@ -27,8 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include <absl/base/attributes.h>
-
 namespace htls::range {
 
 // Applies combinators.
@@ -293,19 +291,19 @@ class CombinatorWrapper {
       : combinator_(std::forward<Creator>(creator)(TypeIdentity<InputType>())) {
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetChain() {
+  auto& GetChain() {
     return static_cast<Chain&>(*this);
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& GetChain() const {
+  auto& GetChain() const {
     return static_cast<const Chain&>(*this);
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Next() {
+  decltype(auto) Next() {
     return GetChain().Get(Index<I + 1>());
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr decltype(auto) End() {
+  constexpr decltype(auto) End() {
     static_assert(CombinatorCreator::kInputProcessingStyle ==
                       ProcessingStyle::kIncremental,
                   "End called on a complete processing "
@@ -318,7 +316,7 @@ class CombinatorWrapper {
       return Next().End();
     }
   }
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool Done() const {
+  constexpr bool Done() const {
     if constexpr (kHasDone<Combinator>) {
       return combinator_.Done();
     } else {
@@ -326,14 +324,14 @@ class CombinatorWrapper {
     }
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool AnyDone() const {
+  constexpr bool AnyDone() const {
     return GetChain().AnyDone(Index<I>());
   }
 
   // Only accept InputType with exactly matching reference type.
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t) = delete;
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType t) {
+  void ProcessIncremental(T&& t) = delete;
+  void ProcessIncremental(InputType t) {
     constexpr bool has_process_incremental =
         kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
 
@@ -357,8 +355,8 @@ class CombinatorWrapper {
       typename T,
       ProcessingStyle input_style = CombinatorCreator::kInputProcessingStyle,
       typename = std::enable_if_t<input_style == ProcessingStyle::kComplete>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&&) = delete;
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType t) {
+  decltype(auto) ProcessComplete(T&&) = delete;
+  decltype(auto) ProcessComplete(InputType t) {
     constexpr bool has_process_complete =
         kHasProcessComplete<Combinator, InputType, decltype(Next())>;
     static_assert(
@@ -378,7 +376,7 @@ class CombinatorWrapper {
       typename T, typename = void,
       ProcessingStyle input_style = CombinatorCreator::kInputProcessingStyle,
       typename = std::enable_if_t<input_style == ProcessingStyle::kIncremental>>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(T&& t) {
+  decltype(auto) ProcessComplete(T&& t) {
     constexpr bool has_process_incremental =
         kHasProcessIncremental<Combinator, InputType, decltype(Next())>;
     for (InputType input : t) {
@@ -461,7 +459,7 @@ struct CombinatorChainImpl;
 template <typename InputType>
 struct ChainTerminator {
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE T ProcessComplete(T&& t) {
+  T ProcessComplete(T&& t) {
     return std::forward<T>(t);
   }
 };
@@ -494,16 +492,16 @@ struct CombinatorChainImpl<Terminator, std::index_sequence<Is...>, Types,
 
   Terminator<OutputType> terminator;
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE auto& Get(Index<kSize>) { return terminator; }
+  auto& Get(Index<kSize>) { return terminator; }
 
   template <typename... Ts>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE explicit CombinatorChainImpl(Ts&&... ts)
+  explicit CombinatorChainImpl(Ts&&... ts)
       : CombinatorWrapper<Self, Is, internal_htls_range::InputType<Types, Is>,
                           CombinatorCreators>{std::forward<Ts>(ts)}... {}
 
   // Checks if any of the combinators is done, starting at index.
   template <size_t index>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE constexpr bool AnyDone(Index<index>) const {
+  constexpr bool AnyDone(Index<index>) const {
     return ((Is >= index && this->Get(Index<Is>()).Done()) || ...);
   }
 };
@@ -556,7 +554,7 @@ T ForwardLRef(T& t) {
 }  // namespace internal_htls_range
 
 template <typename Range, typename... Combinators>
-ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
+decltype(auto) Apply(
     Range&& range, Combinators&&... combinators) {
   if constexpr (sizeof...(Combinators) == 0) {
     return internal_htls_range::ForwardLRef<Range>(range);
@@ -585,7 +583,7 @@ ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) Apply(
 }
 
 template <typename... Combinators>
-ABSL_ATTRIBUTE_ALWAYS_INLINE auto Compose(Combinators&&... combinators) {
+auto Compose(Combinators&&... combinators) {
   return std::make_tuple(std::forward<Combinators>(combinators)...);
 }
 

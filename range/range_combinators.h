@@ -27,7 +27,6 @@
 #include <utility>
 #include <vector>
 
-#include <absl/base/attributes.h>
 #include "range/range_core.h"
 
 namespace htls::range {
@@ -296,13 +295,13 @@ struct ToCollectionImpl {
       : appender(std::move(appender)),
         collection(std::forward<Args>(args)...) {}
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&&) {
     appender(collection, static_cast<InputType>(input));
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+  decltype(auto) End(Next&& next) {
     return next.ProcessComplete(std::move(collection));
   }
 };
@@ -314,7 +313,7 @@ struct FilterImpl {
   Predicate f;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&& next) {
     if (f(input)) {
       next.ProcessIncremental(static_cast<InputType>(input));
@@ -329,7 +328,7 @@ struct TransformImpl {
   F f;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&& next) {
     next.ProcessIncremental(std::invoke(f, static_cast<InputType>(input)));
   }
@@ -344,7 +343,7 @@ struct TransformCompleteImpl {
   F f;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) ProcessComplete(InputType input,
+  decltype(auto) ProcessComplete(InputType input,
                                                               Next&& next) {
     return next.ProcessComplete(f(static_cast<InputType>(input)));
   }
@@ -359,7 +358,7 @@ struct FilterDuplicatesImpl {
                      std::optional<std::decay_t<InputType>>>
       test_element;
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&& next) {
     const bool has_value(test_element);
     const bool is_equal = has_value && equal(input, *test_element);
@@ -376,7 +375,7 @@ struct FilterDuplicatesImpl {
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+  decltype(auto) End(Next&& next) {
     if (test_element) {
       next.ProcessIncremental(*std::move(test_element));
     }
@@ -389,7 +388,7 @@ struct FlattenImpl {
   using OutputType = decltype(*std::begin(std::declval<InputType>()));
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&& next) {
     for (OutputType element : input) {
       next.ProcessIncremental(element);
@@ -404,13 +403,13 @@ struct TakeImpl {
   size_t count = 0;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&& next) {
     next.ProcessIncremental(static_cast<InputType>(input));
     ++count;
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return count >= max_count; }
+  bool Done() const { return count >= max_count; }
 };
 
 template <typename InputType>
@@ -420,14 +419,14 @@ struct FrontImpl {
   std::optional<std::decay_t<InputType>> element;
 
   template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
+  void ProcessIncremental(T&& t, Next&& next) {
     element = std::forward<T>(t);
   }
 
-  ABSL_ATTRIBUTE_ALWAYS_INLINE bool Done() const { return element.has_value(); }
+  bool Done() const { return element.has_value(); }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+  decltype(auto) End(Next&& next) {
     return next.ProcessComplete(std::move(*element));
   }
 };
@@ -438,7 +437,7 @@ struct EnumerateImpl {
 
   size_t index = 0;
   template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
+  void ProcessIncremental(T&& t, Next&& next) {
     next.ProcessIncremental(OutputType{index, std::forward<T>(t)});
     ++index;
   }
@@ -461,7 +460,7 @@ struct ZipWithImpl {
   Iterator iterator{};
   EndIterator end_iterator{};
   template <typename T, typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(T&& t, Next&& next) {
+  void ProcessIncremental(T&& t, Next&& next) {
     next.ProcessIncremental(std::tuple_cat(WrapInTuple(std::forward<T>(t)),
                                            WrapInTuple(*iterator)));
     ++iterator;
@@ -480,20 +479,20 @@ struct AccumulateInPlaceImpl {
   F f;
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE void ProcessIncremental(InputType input,
+  void ProcessIncremental(InputType input,
                                                        Next&&) {
     f(accumulated, static_cast<InputType>(input));
   }
 
   template <typename Next>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE decltype(auto) End(Next&& next) {
+  decltype(auto) End(Next&& next) {
     return next.ProcessComplete(std::move(accumulated));
   }
 };
 
 struct AddressOfFunctor {
   template <typename T>
-  ABSL_ATTRIBUTE_ALWAYS_INLINE T* operator()(T& t) const {
+  T* operator()(T& t) const {
     return &t;
   }
 };
