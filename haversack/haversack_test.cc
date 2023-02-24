@@ -832,5 +832,10 @@ TEST(GoodCompilerErrors, GetShared) {
       (void)Haversack<>().GetShared<B>());
 }
 
+TEST(HaversackTestUtil, IndirectGetShared) {
+  Haversack<Deps<GHSack>> deps{std::make_shared<G>(1), std::make_shared<L>(2)};
+  EXPECT_THAT(IndirectGetShared<G>(deps)->i, 1);
+}
+
 }  // namespace
 }  // namespace hotels::haversack

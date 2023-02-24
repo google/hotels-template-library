@@ -115,6 +115,24 @@ auto MakeFakeHaversack(Args&&... args) {
       std::forward<Args>(args)...);
 }
 
+// Get any dependency out of a Haversack. This technique is doable in non-test
+// code, but there isn't a good use case to make it easier outside of tests.
+//
+// Example:
+//  struct Alpha {};
+//  using Bar = Haversack<Alpha>;
+//  using Foo = Haversack<Deps<Bar>>;
+//
+//  Foo foo{std::make_shared<Alpha>()};
+//
+//  // Cannot get Alpha from Foo because it is not a direct dependency.
+//  // foo.Get<Alpha>();
+//  const Alpha& alpha = *IndirectGetShared<Alpha>(foo);
+template <typename T>
+decltype(auto) IndirectGetShared(const Haversack<T>& dependencies) {
+  return dependencies.template GetShared<T>();
+}
+
 }  // namespace hotels::haversack
 
 #ifdef UNSET_HAVERSACK_GET_TESTER_MODE
