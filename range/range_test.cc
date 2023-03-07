@@ -19,6 +19,7 @@
 #include <initializer_list>
 #include <list>
 #include <numeric>
+#include <optional>
 #include <set>
 #include <string>
 #include <type_traits>
@@ -678,17 +679,32 @@ TEST(TestOutputCombinators, FrontLValue) {
                       Front()  //
   );
 
-  EXPECT_THAT(result, 1);
+  EXPECT_TRUE(result.has_value());
+  EXPECT_THAT(*result, 1);
 
   static_assert(std::is_same_v<decltype(Apply(v,       //
                                               Front()  //
                                               )),
-                               int>);
+                               std::optional<int>>);
+}
+
+TEST(TestOutputCombinators, EmptyFront) {
+  std::vector<int> v{};
+  auto result = Apply(v,               //
+                      Front()  //
+  );
+
+  EXPECT_THAT(result, std::nullopt);
+
+  static_assert(std::is_same_v<decltype(Apply(v,               //
+                                              Front()  //
+                                              )),
+                               std::optional<int>>);
 }
 
 TEST(TestOutputCombinators, FrontRef) {
   std::vector<int> v{1, 2, 3};
-  int& result = Apply(v,      //
+  int& result = *Apply(v,      //
                       Ref(),  //
                       Front());
 
@@ -698,7 +714,7 @@ TEST(TestOutputCombinators, FrontRef) {
   static_assert(std::is_same_v<decltype(Apply(v,      //
                                               Ref(),  //
                                               Front())),
-                               std::reference_wrapper<int>>);
+                               std::optional<std::reference_wrapper<int>>>);
 }
 
 TEST(TestOutputCombinators, FrontRValue) {
@@ -709,13 +725,13 @@ TEST(TestOutputCombinators, FrontRValue) {
                       Front()              //
   );
 
-  EXPECT_THAT(result, 2);
+  EXPECT_THAT(*result, 2);
 
   static_assert(std::is_same_v<decltype(Apply(v,                   //
                                               Transform(add_one),  //
                                               Front()              //
                                               )),
-                               int>);
+                               std::optional<int>>);
 }
 
 TEST(TestOutputCombinators, TakeToVector) {

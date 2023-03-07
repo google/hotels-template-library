@@ -91,17 +91,19 @@ template <template <typename...> typename Collection,
           typename... CollectionParams, typename Appender, typename... Args>
 auto ToCollection(Appender appender, Args&&... args);
 
-// Yields the first incremental input as a complete value.
+// Yields the first incremental input as an std::optional complete value.
 // The input will be converted to a value then moved out.
+// If the range is empty, an empty std::optional will be returned
 /* Example: ********************************************************************
 std::vector v{1, 2, 3, 4};
-int result = Apply(v, Front());                      // result == 1
-int result = Apply(v, Transform(add_one), Front());  // result == 2
-int& result = Apply(v, Ref(), Front());              // &result == &v.front()
+std::optional<int> result = Apply(v, Front());                   // *result == 1
+
+std::vector empty_v;
+std::optional<int> result = Apply(empty_v, Front()); // result == std::nullopt
+
 // ****************************************************************************/
 // In: Incremental
 // Out: Complete
-// Note: If the range is empty, the behavior is undefined.
 inline auto Front();
 
 // Sorts the input.
@@ -414,7 +416,7 @@ struct TakeImpl {
 
 template <typename InputType>
 struct FrontImpl {
-  using OutputType = std::decay_t<InputType>&&;
+  using OutputType = std::optional<std::decay_t<InputType>>&&;
 
   std::optional<std::decay_t<InputType>> element;
 
@@ -427,7 +429,7 @@ struct FrontImpl {
 
   template <typename Next>
   decltype(auto) End(Next&& next) {
-    return next.ProcessComplete(std::move(*element));
+      return next.ProcessComplete(std::move(element));
   }
 };
 
