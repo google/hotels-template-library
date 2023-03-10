@@ -100,5 +100,21 @@ TEST(BasicTuple, Comparable) {
   EXPECT_NE(d, e);
 }
 
+struct MoveOnly {
+  int i = 0;
+
+  explicit MoveOnly(int x) : i(x) {}
+  MoveOnly(const MoveOnly&) = delete;
+  MoveOnly& operator=(const MoveOnly&) = delete;
+  MoveOnly(MoveOnly&&) = default;
+  MoveOnly& operator=(MoveOnly&&) = default;
+};
+
+TEST(Accumulate, MoveOnly) {
+  EXPECT_EQ(Accumulate([](MoveOnly sum, MoveOnly value) {
+    return MoveOnly(sum.i + value.i);
+  }, MakeBasicTuple(MoveOnly(2), MoveOnly(3)), MoveOnly(1)).i, 6);
+}
+
 }  // namespace
 }  // namespace htls::meta

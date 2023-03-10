@@ -117,9 +117,9 @@ struct AccumulateHelper {
   constexpr AccumulateHelper(const F& f, T t) : f(f), t(std::move(t)) {}
 
   template <typename U>
-  constexpr auto operator<<(U&& u) const {
+  constexpr auto operator<<(U&& u) && {
     return internal_basic_tuple::AccumulateHelper(
-        this->f, this->f(t, std::forward<U>(u)));
+        this->f, this->f(std::move(t), std::forward<U>(u)));
   }
 };
 template <typename F, typename T>
