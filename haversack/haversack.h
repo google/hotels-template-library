@@ -180,7 +180,7 @@ class Haversack {
             (!internal::kIsValidCtorArg<First> &&
              !internal::IsHaversack(htls::meta::type_c<First>)),
             typename = std::enable_if_t<kAnyInvalidCtorArgs>>
-  Haversack(First, Rest...)  // NOLINT
+  explicit Haversack(First, Rest...)
       HTLS_UNAVAILABLE_ATTRIBUTE(
           "One of the Haversack constructor arguments wasn't a pointer "
           "when it should have been (or it wasn't a supported pointer).");
