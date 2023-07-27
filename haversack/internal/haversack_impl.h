@@ -734,18 +734,27 @@ struct HaversackTraits {
         },
         all_deps.Tuple()));
   }
-  constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps, ProvidedDepsT provided_deps,
+  constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps,
+                            ProvidedDepsT provided_deps,
                             ChildHaversacksT child_haversacks, BuilderSuccessT)
       : direct(direct),
         all_deps(all_deps),
         provided_deps(provided_deps),
         child_haversacks(child_haversacks) {}
 };
-template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT, typename ChildHaversacksT,
-          typename BuilderSuccessT>
-HaversackTraits(DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT, BuilderSuccessT)
+template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT,
+          typename ChildHaversacksT, typename BuilderSuccessT>
+HaversackTraits(DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
+                BuilderSuccessT)
     -> HaversackTraits<DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
                        BuilderSuccessT>;
+
+template <typename... Ts>
+constexpr void AssertNoExtraProvides(htls::meta::TypeSet<Ts...>) {
+  static_assert(sizeof...(Ts) == 0,
+                "The set of indirect dependencies should be a superset of the "
+                "\"provided\" dependencies.");
+}
 
 // Holds the different sets of types, organized into different categories.
 //
@@ -809,17 +818,13 @@ struct HaversackTraitsBuilder {
 
     constexpr bool no_direct_deps_are_provided =
         size((direct_dep_set & provide_set).Tuple()) == 0;
-    constexpr bool indirect_deps_is_superset_of_provides =
-        dep_set >= provide_set;
+    constexpr htls::meta::TypeSet superfluous_provides = provide_set - dep_set;
     constexpr bool all_direct_deps_unique =
         size(self.direct) == size(direct_dep_set.Tuple());
     static_assert(
         no_direct_deps_are_provided,
         "A direct dependency cannot be provided by the same Haversack.");
-    static_assert(
-        indirect_deps_is_superset_of_provides,
-        "The set of indirect dependencies should be a superset of the "
-        "\"provided\" dependencies.");
+    AssertNoExtraProvides(superfluous_provides);
     static_assert(all_direct_deps_unique,
                   "Each direct dependency should be unique.");
     constexpr htls::meta::BasicTuple tags = Filter(
@@ -835,9 +840,11 @@ struct HaversackTraitsBuilder {
     static_assert(no_tags_as_deps, "Don't use Tag types as dependencies.");
     // Failing a static_assert does not interrupt compilation so we still
     // explicitly pass this BuilderSuccessT every time.
-    using BuilderSuccessT = std::bool_constant<
-        no_direct_deps_are_provided && indirect_deps_is_superset_of_provides &&
-        all_direct_deps_unique && all_tags_unique && no_tags_as_deps>;
+    using BuilderSuccessT =
+        std::bool_constant<no_direct_deps_are_provided &&
+                           size(superfluous_provides.Tuple()) == 0 &&
+                           all_direct_deps_unique && all_tags_unique &&
+                           no_tags_as_deps>;
     return HaversackTraits(direct_dep_set, dep_set - provide_set, provide_set,
                            make_type_set(self.child_haversacks),
                            BuilderSuccessT());

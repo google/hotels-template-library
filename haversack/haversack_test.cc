@@ -832,6 +832,14 @@ TEST(GoodCompilerErrors, GetShared) {
       (void)Haversack<>().GetShared<B>());
 }
 
+TEST(GoodCompilerErrors, SuperfluousProvides) {
+  EXPECT_NON_COMPILE(
+      "The set of indirect dependencies should be a superset of the "
+      "(.|\n)*AssertNoExtraProvides<hotels::haversack::\\(anonymous "
+      "namespace\\)::A>",
+      (void)Haversack<Provides<A>>());
+}
+
 TEST(HaversackTestUtil, IndirectGetShared) {
   Haversack<Deps<GHSack>> deps{std::make_shared<G>(1), std::make_shared<L>(2)};
   EXPECT_THAT(IndirectGetShared<G>(deps)->i, 1);
