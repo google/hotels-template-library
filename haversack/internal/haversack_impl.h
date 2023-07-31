@@ -695,8 +695,8 @@ constexpr auto GetTypesFromProvides(
 // static_assert does not stop compilation automatically so we explicitly skip
 // the rest of the validation if we htls::meta::get any failures.
 // - All the types in the sets are WrappedTypes.
-template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT, typename ChildHaversacksT,
-          typename BuilderSuccessT>
+template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT,
+          typename ChildHaversacksT, typename BuilderSuccessT>
 struct HaversackTraits {
   DirectDepsT direct;
   AllDepsT all_deps;

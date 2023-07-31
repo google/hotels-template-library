@@ -39,9 +39,38 @@ struct FakeCompatibility {
 
 // friend declaration requires this definition is in the internal namespace.
 struct HaversackTestUtil {
+ private:
+  template <typename HaversackT, typename... SubHaversackTs,
+            typename... CoercedCtorArgs>
+  static auto ValidateArgs(htls::meta::Type<CoercedCtorArgs>...) {
+    constexpr auto direct_type_set =
+        TraitsOf(htls::meta::type_c<HaversackT>).direct |
+        (htls::meta::MakeTypeSet() | ... |
+         (TraitsOf(htls::meta::type_c<SubHaversackTs>).direct &
+          TraitsOf(htls::meta::type_c<HaversackT>).all_deps));
+    using RequiredTypesHaversack =
+        typename decltype(htls::meta::FromTuple<Haversack>(
+            direct_type_set.Tuple()))::type;
+    constexpr CompatibleArgs compatibility =
+        RequiredTypesHaversack::Traits().CtorCompatibility(
+            htls::meta::MakeTypeSet(),
+            htls::meta::MakeBasicTuple(htls::meta::type_c<CoercedCtorArgs>...));
+    RequiredTypesHaversack::RunChecks(compatibility.GetMatchChecks());
+    if constexpr (compatibility.IsCompatible()) {
+      return htls::meta::type_c<RequiredTypesHaversack>;
+    } else {
+      return htls::meta::type_c<void>;
+    }
+  }
+
+ public:
   template <
       typename HaversackT, typename... SubHaversackTs, typename... Args,
+      typename RequiredTypesHaversack =
+          typename decltype(ValidateArgs<HaversackT, SubHaversackTs...>(
+              htls::meta::type_c<CoercedCtorArg<Args>>...))::type,
       typename = std::enable_if_t<
+          !std::is_void_v<RequiredTypesHaversack> &&
           internal::IsHaversack(htls::meta::type_c<HaversackT>) &&
           (... && internal::IsHaversack(htls::meta::type_c<SubHaversackTs>))>>
   static HaversackT MakeFakeHaversack(Args&&... args) {
@@ -58,14 +87,6 @@ struct HaversackTestUtil {
     // Also, any direct dependencies in SubHaversackTs that are in HaversackT.
     // This specifically doesn't include dependencies that are Provided
     // somewhere.
-    constexpr auto direct_type_set =
-        TraitsOf(htls::meta::type_c<HaversackT>).direct |
-        (htls::meta::MakeTypeSet() | ... |
-         (TraitsOf(htls::meta::type_c<SubHaversackTs>).direct &
-          TraitsOf(htls::meta::type_c<HaversackT>).all_deps));
-    using RequiredTypesHaversack =
-        typename decltype(htls::meta::FromTuple<Haversack>(
-            direct_type_set.Tuple()))::type;
     auto direct_deps_haversack =
         RequiredTypesHaversack(std::forward<Args>(args)...);
 
@@ -104,7 +125,7 @@ struct HaversackTestUtil {
 // the same conversion rules as regular Haversack construction.
 //
 // This is useful when part of the call chain is mocked so that the dependencies
-// only needed in that subgraph of the call chain don't need to be instaniated
+// only needed in that subgraph of the call chain don't need to be instantiated
 // in testing.
 //
 // Multiple Haversack htls::meta can be specified which allows some Haversack
