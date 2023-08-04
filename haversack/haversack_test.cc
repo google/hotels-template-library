@@ -840,6 +840,19 @@ TEST(GoodCompilerErrors, SuperfluousProvides) {
       (void)Haversack<Provides<A>>());
 }
 
+TEST(Haversack, ReferenceWrapperArgument) {
+  std::shared_ptr<A> a = std::make_shared<A>(5);
+  Haversack<A> deps{std::cref(a)};
+  EXPECT_EQ(deps.Get<A>().i, 5);
+}
+
+TEST(Haversack, ReferenceWrapperArgumentUnique) {
+  std::unique_ptr<A> a = std::make_unique<A>(5);
+  EXPECT_NON_COMPILE(
+      "call to implicitly-deleted copy constructor of 'std::unique_ptr",
+      Haversack<A>{std::ref(a)});
+}
+
 TEST(HaversackTestUtil, IndirectGetShared) {
   Haversack<Deps<GHSack>> deps{std::make_shared<G>(1), std::make_shared<L>(2)};
   EXPECT_THAT(IndirectGetShared<G>(deps)->i, 1);

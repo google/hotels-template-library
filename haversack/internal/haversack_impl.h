@@ -43,6 +43,7 @@
 
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <tuple>
@@ -955,6 +956,10 @@ auto CoerceCtorArg(Tagged<T, Tag> tagged) {
   return tagged;
 }
 inline std::nullptr_t CoerceCtorArg(std::nullptr_t) { return nullptr; }
+template <typename T>
+auto CoerceCtorArg(std::reference_wrapper<T> t) {
+  return CoerceCtorArg(t.get());
+}
 
 template <typename T>
 using CoercedCtorArg = decltype(CoerceCtorArg(std::declval<T&&>()));
