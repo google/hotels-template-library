@@ -849,7 +849,8 @@ TEST(Haversack, ReferenceWrapperArgument) {
 TEST(Haversack, ReferenceWrapperArgumentUnique) {
   std::unique_ptr<A> a = std::make_unique<A>(5);
   EXPECT_NON_COMPILE(
-      "call to implicitly-deleted copy constructor of 'std::unique_ptr",
+      "One of the Haversack constructor arguments wasn't a pointer when it "
+      "should have been",
       Haversack<A>{std::ref(a)});
 }
 

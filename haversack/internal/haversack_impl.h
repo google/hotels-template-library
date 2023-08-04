@@ -957,7 +957,8 @@ auto CoerceCtorArg(Tagged<T, Tag> tagged) {
 }
 inline std::nullptr_t CoerceCtorArg(std::nullptr_t) { return nullptr; }
 template <typename T>
-auto CoerceCtorArg(std::reference_wrapper<T> t) {
+auto CoerceCtorArg(std::reference_wrapper<T> t)
+    -> decltype(CoerceCtorArg(t.get())) {
   return CoerceCtorArg(t.get());
 }
 
