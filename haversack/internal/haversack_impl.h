@@ -72,20 +72,6 @@ namespace hotels::haversack {
 
 template <typename...>
 struct Haversack;
-
-template <auto&&...>
-struct Calls;
-
-template <typename...>
-struct Deps;
-
-template <typename...>
-struct Provides;
-
-template <typename>
-struct KnownThreadSafe;
-template <typename>
-struct Nullable;
 template <typename, typename>
 struct Tagged;
 
@@ -114,6 +100,60 @@ constexpr void assert_is_helper(Compare cmp, ContextPtrs*... context_ptrs) {
 }
 
 }  // namespace internal_assert_is
+
+template <typename T>
+concept NullablePointer =
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::unique_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    std::is_pointer_v<T> || 
+    std::is_same_v<T, std::nullptr_t>;
+template <typename T>
+concept NullablePointerOrRRef =  // TODO(cmgp): How do you inline this into
+                                 // NotNullPointer?
+    NullablePointer<T> || (std::is_rvalue_reference_v<T> &&
+                           NullablePointer<std::remove_reference_t<T>>);
+template <typename T>
+concept NotNullPointer = requires(T t) {
+  typename T::element_type;
+  { std::move(t).value() } -> NullablePointerOrRRef;
+  requires std::is_same_v<typename std::pointer_traits<std::remove_reference_t<
+                              decltype(std::move(t).value())>>::element_type,
+                          typename T::element_type>;
+};
+template <typename T>
+concept UncoercedCtorArg =
+    NullablePointer<T> || NotNullPointer<T> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>>;
+
+template <typename T>
+concept CoercedCtorArgC = 
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>> ||
+    std::is_same_v<T, std::nullptr_t>;
+
+template <typename T>
+concept HaversackInstance =
+    htls::meta::Concept<typename T::HaversackT,
+                        htls::meta::IsTemplateInstance<Haversack>> &&
+    std::is_base_of_v<typename T::HaversackT, T>;
+
+}  // namespace internal
+
+template <auto&&...>
+struct Calls;
+
+template <internal::HaversackInstance...>
+struct Deps;
+
+template <typename...>
+struct Provides;
+
+template <typename>
+struct KnownThreadSafe;
+template <typename>
+struct Nullable;
+
+namespace internal {
 
 // Perform a static_assert on N and M using cmp. The list of Context types will
 // be interleaved with Placeholder for easy parsing.
@@ -237,7 +277,7 @@ template <typename WrappedType>
 constexpr bool IsKnownThreadSafe(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).known_thread_safe;
 }
-template <typename CtorArg>
+template <CoercedCtorArgC CtorArg>
 constexpr auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
   if constexpr (t == htls::meta::type_c<std::nullptr_t>) {
     return htls::meta::type_c<void>;
@@ -247,7 +287,7 @@ constexpr auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
     return htls::meta::type_c<typename CtorArg::element_type>;
   }
 }
-template <typename CtorArg>
+template <CoercedCtorArgC CtorArg>
 constexpr auto DeduceWrappedTypeFromCtorArg(htls::meta::Type<CtorArg> t) {
   constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
   return remove_const(GetDisplayableCtorArgType(t));
@@ -274,17 +314,25 @@ struct HaversackTestUtil;
 // Sentinel type to identify the root Haversack ctor.
 struct CtorSentinel {};
 
+template <typename, typename, typename, typename, typename>
+struct HaversackTraits;
+
 // Access the private traits of the Haversack.
 template <typename... Ts>
-constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>);
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+    TraitsOf(htls::meta::Type<Haversack<Ts...>>);
 template <typename HaversackT>
-constexpr auto TraitsOf(htls::meta::Type<HaversackT> t);
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<HaversackT> t);
 
 template <typename SourceDisplayableCtorArg, typename... TargetWrappedTypes>
 struct SourceMatches {
   static constexpr std::size_t kMatches = sizeof...(TargetWrappedTypes);
 
-  template <typename U>
+  template <
+      htls::meta::Concept<htls::meta::IsTemplateInstance<SourceMatches>> U>
   static constexpr void Check() {
     if constexpr (U::kMatches < 1) {
       static_assert(
@@ -308,7 +356,8 @@ template <typename TargetWrappedType, typename... SourceDisplayableTypes>
 struct TargetMatches {
   static constexpr std::size_t kMatches = sizeof...(SourceDisplayableTypes);
 
-  template <typename U>
+  template <
+      htls::meta::Concept<htls::meta::IsTemplateInstance<TargetMatches>> U>
   static constexpr void Check() {
     if constexpr (U::kMatches < 1) {
       static_assert(
@@ -1002,7 +1051,9 @@ constexpr HaversackTraits kHaversackTraits =
 // that all static_assert failures are emitted for
 // "HAVERSACK_GET_TESTER_MODE == 1".
 template <typename... Ts>
-constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 #if HAVERSACK_GET_TESTER_MODE == 1
   // Emit a static_assert failure for each direct dependency in the haversack.
   Transform(
@@ -1020,7 +1071,9 @@ constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 // Overload to dispatch to the actual Haversack<...> type instead of the
 // subtype.
 template <typename HaversackT>
-constexpr auto TraitsOf(htls::meta::Type<HaversackT> t) {
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<HaversackT> t) {
   if constexpr (t != htls::meta::type_c<typename HaversackT::HaversackT>) {
     return TraitsOf(htls::meta::type_c<typename HaversackT::HaversackT>);
   }

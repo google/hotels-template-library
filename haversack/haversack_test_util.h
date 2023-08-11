@@ -17,8 +17,8 @@
 
 #include <type_traits>
 
-#include "meta/basic_tuple.h"
 #include "haversack/haversack.h"
+#include "meta/basic_tuple.h"
 
 #ifndef HAVERSACK_GET_TESTER_MODE
 // If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
@@ -30,7 +30,10 @@
 namespace hotels::haversack {
 namespace internal {
 
-struct FakeCompatibility {
+struct FakeCompatibilityTag;
+
+template <>
+struct CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag> {
   static constexpr htls::meta::BasicTuple<> GetMatchChecks() {
     return htls::meta::BasicTuple<>();
   }
@@ -97,7 +100,8 @@ struct HaversackTestUtil {
         TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
     // Instance of AllDepsHaversack, initially only containing nullptrs.
     auto result = AllDepsHaversack(
-        internal::CtorSentinel(), FakeCompatibility(),
+        internal::CtorSentinel(),
+        CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
         typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
                               .MemberTupleType())::type());
 
