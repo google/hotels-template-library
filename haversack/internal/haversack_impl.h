@@ -72,22 +72,12 @@ namespace hotels::haversack {
 
 template <typename...>
 struct Haversack;
-
-template <auto&&...>
-struct Calls;
-
-template <typename...>
-struct Deps;
-
-template <typename...>
-struct Provides;
-
+template <typename, typename>
+struct Tagged;
 template <typename>
 struct KnownThreadSafe;
 template <typename>
 struct Nullable;
-template <typename, typename>
-struct Tagged;
 
 namespace internal {
 namespace internal_assert_is {
@@ -114,6 +104,70 @@ constexpr void assert_is_helper(Compare cmp, ContextPtrs*... context_ptrs) {
 }
 
 }  // namespace internal_assert_is
+
+template <typename T>
+class SecurityBadge {
+ private:
+  SecurityBadge() = default;
+  friend T;
+};
+
+template <typename T>
+concept NullablePointer =
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::unique_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    std::is_pointer_v<T>;
+template <typename T>
+concept NullablePointerOrRRef =  // TODO(cmgp): How do you inline this into
+                                 // NotNullPointer?
+    NullablePointer<T> || (std::is_rvalue_reference_v<T> &&
+                           NullablePointer<std::remove_reference_t<T>>);
+template <typename T>
+concept NotNullPointer = requires(T t) {
+  typename T::element_type;
+  { std::move(t).value() } -> NullablePointerOrRRef;
+  requires std::is_same_v<typename std::pointer_traits<std::remove_reference_t<
+                              decltype(std::move(t).value())>>::element_type,
+                          typename T::element_type>;
+};
+template <typename T>
+concept UncoercedCtorArg =
+    NullablePointer<T> || NotNullPointer<T> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>>;
+template <typename T>
+concept ExplicitInsertArg =
+    UncoercedCtorArg<T> || std::is_same_v<T, std::nullptr_t>;
+
+template <typename T>
+concept CoercedCtorArgC =
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>> ||
+    std::is_same_v<T, std::nullptr_t>;
+
+template <typename T>
+concept UnwrappedType =
+    !htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>> &&
+    !htls::meta::Concept<T, htls::meta::IsTemplateInstance<Nullable>> &&
+    !htls::meta::Concept<T, htls::meta::IsTemplateInstance<KnownThreadSafe>>;
+
+template <typename T>
+concept HaversackInstance =
+    htls::meta::Concept<typename T::HaversackT,
+                        htls::meta::IsTemplateInstance<Haversack>> &&
+    std::is_base_of_v<typename T::HaversackT, T>;
+
+}  // namespace internal
+
+template <auto&&...>
+struct Calls;
+
+template <internal::HaversackInstance...>
+struct Deps;
+
+template <typename...>
+struct Provides;
+
+namespace internal {
 
 // Perform a static_assert on N and M using cmp. The list of Context types will
 // be interleaved with Placeholder for easy parsing.
@@ -237,7 +291,7 @@ template <typename WrappedType>
 constexpr bool IsKnownThreadSafe(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).known_thread_safe;
 }
-template <typename CtorArg>
+template <CoercedCtorArgC CtorArg>
 constexpr auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
   if constexpr (t == htls::meta::type_c<std::nullptr_t>) {
     return htls::meta::type_c<void>;
@@ -247,11 +301,14 @@ constexpr auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
     return htls::meta::type_c<typename CtorArg::element_type>;
   }
 }
-template <typename CtorArg>
+template <CoercedCtorArgC CtorArg>
 constexpr auto DeduceWrappedTypeFromCtorArg(htls::meta::Type<CtorArg> t) {
   constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
   return remove_const(GetDisplayableCtorArgType(t));
 }
+
+// Forward decl for friends.
+struct HaversackTestUtil;
 
 // "Holder" type to own a WrappedType in the Haversack. Especially useful for
 // discriminating between Nullable<WrappedType> and WrappedType which both are
@@ -260,31 +317,54 @@ constexpr auto DeduceWrappedTypeFromCtorArg(htls::meta::Type<CtorArg> t) {
 // value is nullable to allow for MakeFakeHaversack in testing. Nulability
 // invariants are enforced during Haversack construction in production.
 template <typename WrappedType>
-struct Holder {
+class Holder {
+ public:
   using type = WrappedType;
+  using ProxyType = SharedProxy<typename decltype(kUnwrapTypeWrappers(
+      htls::meta::type_c<WrappedType>))::type>;
 
-  SharedProxy<typename decltype(kUnwrapTypeWrappers(
-      htls::meta::type_c<WrappedType>))::type>
-      value;
+  explicit Holder(ProxyType v) : value_(std::move(v)) {
+    if constexpr (!internal::IsNullable(htls::meta::type_c<type>)) {
+      if (!value_) {
+        std::cerr << "Pointers should never be null in haversack, but a "
+                  << htls::meta::DebugTypeName(htls::meta::type_c<type>)
+                  << " was null" << std::endl;
+        assert(value_);
+        abort();
+      }
+    }
+  }
+  // Only used in tests.
+  explicit Holder(SecurityBadge<HaversackTestUtil>) : value_(nullptr) {}
+
+  const ProxyType& value() const { return value_; }
+
+ private:
+  ProxyType value_;
 };
-
-// Forward decl for friends.
-struct HaversackTestUtil;
 
 // Sentinel type to identify the root Haversack ctor.
 struct CtorSentinel {};
 
+template <typename, typename, typename, typename, typename>
+struct HaversackTraits;
+
 // Access the private traits of the Haversack.
 template <typename... Ts>
-constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>);
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+    TraitsOf(htls::meta::Type<Haversack<Ts...>>);
 template <typename HaversackT>
-constexpr auto TraitsOf(htls::meta::Type<HaversackT> t);
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<HaversackT> t);
 
 template <typename SourceDisplayableCtorArg, typename... TargetWrappedTypes>
 struct SourceMatches {
   static constexpr std::size_t kMatches = sizeof...(TargetWrappedTypes);
 
-  template <typename U>
+  template <
+      htls::meta::Concept<htls::meta::IsTemplateInstance<SourceMatches>> U>
   static constexpr void Check() {
     if constexpr (U::kMatches < 1) {
       static_assert(
@@ -308,7 +388,8 @@ template <typename TargetWrappedType, typename... SourceDisplayableTypes>
 struct TargetMatches {
   static constexpr std::size_t kMatches = sizeof...(SourceDisplayableTypes);
 
-  template <typename U>
+  template <
+      htls::meta::Concept<htls::meta::IsTemplateInstance<TargetMatches>> U>
   static constexpr void Check() {
     if constexpr (U::kMatches < 1) {
       static_assert(
@@ -333,7 +414,7 @@ struct TargetMatches {
 
 // kFindMatches is a constexpr memoization cache for FindMatchesImpl to avoid
 // maximum step limit compilation errors.
-template <typename TargetWrappedTypes, typename SourceCtorArg>
+template <typename TargetWrappedTypes, CoercedCtorArgC SourceCtorArg>
 constexpr auto FindMatchesImpl(
     htls::meta::Type<SourceCtorArg> source_ctor_arg) {
   constexpr htls::meta::MetaValueFunction<std::is_convertible> is_convertible;
@@ -363,16 +444,20 @@ constexpr auto FindMatchesImpl(
       },
       TargetWrappedTypes());
 }
-template <typename TargetWrappedTypes, typename SourceCtorArg>
+template <typename TargetWrappedTypes, CoercedCtorArgC SourceCtorArg>
 constexpr htls::meta::BasicTuple kFindMatches =
     FindMatchesImpl<TargetWrappedTypes>(htls::meta::type_c<SourceCtorArg>);
 
+template <typename, typename>
+class CompatibleArgs;
+
 // kGetMatchChecks is a constexpr memoization cache for GetMatchChecksImpl to
 // avoid maximum step limit compilation errors.
-template <typename CompatibleArgsInstance>
+template <htls::meta::Concept<htls::meta::IsTemplateInstance<CompatibleArgs>>
+              Compatibility>
 constexpr auto GetMatchChecksImpl() {
   htls::meta::BasicTuple all_source_matches =
-      CompatibleArgsInstance::FindAllSourceMatches();
+      Compatibility::FindAllSourceMatches();
   htls::meta::BasicTuple source_checks = Transform(
       [=](auto t) {
         return htls::meta::FromTuple<SourceMatches>(
@@ -386,24 +471,25 @@ constexpr auto GetMatchChecksImpl() {
         return htls::meta::FromTuple<TargetMatches>(
             htls::meta::MakeBasicTuple(t) +
             Transform([](auto u) { return GetDisplayableCtorArgType(u); },
-                      CompatibleArgsInstance::FindTargetMatches(
-                          t, all_source_matches)));
+                      Compatibility::FindTargetMatches(t, all_source_matches)));
       },
-      typename CompatibleArgsInstance::TargetWrappedTypes());
+      typename Compatibility::TargetWrappedTypes());
   return source_checks + target_checks;
 }
-template <typename CompatibleArgsInstance>
+template <htls::meta::Concept<htls::meta::IsTemplateInstance<CompatibleArgs>>
+              Compatibility>
 constexpr htls::meta::BasicTuple kGetMatchChecks =
-    GetMatchChecksImpl<CompatibleArgsInstance>();
+    GetMatchChecksImpl<Compatibility>();
 
 // ConvertOne<TargetWrappedType> has an operator() to convert any valid CtorArg
 // to a Holder<TargetWrappedType>.
 template <typename TargetWrappedType,
-          typename TargetUnwrappedType = typename decltype(kUnwrapTypeWrappers(
-              htls::meta::type_c<TargetWrappedType>))::type>
+          UnwrappedType TargetUnwrappedType =
+              typename decltype(kUnwrapTypeWrappers(
+                  htls::meta::type_c<TargetWrappedType>))::type>
 struct ConvertOne {
   // Returns the appropriate Holder if a conversion is possible, otherwise void.
-  template <typename U>
+  template <CoercedCtorArgC U>
   constexpr static auto Impl(U u) {
     if constexpr (htls::meta::IsTemplateInstance<std::shared_ptr>(
                       htls::meta::type_c<U>) &&
@@ -416,19 +502,10 @@ struct ConvertOne {
       }
     }
   }
-  template <typename U, typename = std::enable_if_t<!std::is_same_v<
-                            decltype(Impl(std::declval<U&&>())), void>>>
+  template <CoercedCtorArgC U>
+    requires(!std::is_same_v<decltype(Impl(std::declval<U &&>())), void>)
   constexpr Holder<TargetWrappedType> operator()(U u) const {
-    Holder holder = Impl(std::move(u));
-    if constexpr (!IsNullable(htls::meta::type_c<TargetWrappedType>)) {
-      if (!holder.value) {
-        HAVERSACK_DIE("Pointers should never be null in haversack, but a "
-                      << htls::meta::DebugTypeName(
-                             htls::meta::type_c<TargetUnwrappedType*>)
-                      << " was null");
-      }
-    }
-    return holder;
+    return Impl(std::move(u));
   }
 };
 
@@ -1002,7 +1079,9 @@ constexpr HaversackTraits kHaversackTraits =
 // that all static_assert failures are emitted for
 // "HAVERSACK_GET_TESTER_MODE == 1".
 template <typename... Ts>
-constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 #if HAVERSACK_GET_TESTER_MODE == 1
   // Emit a static_assert failure for each direct dependency in the haversack.
   Transform(
@@ -1020,7 +1099,9 @@ constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 // Overload to dispatch to the actual Haversack<...> type instead of the
 // subtype.
 template <typename HaversackT>
-constexpr auto TraitsOf(htls::meta::Type<HaversackT> t) {
+constexpr htls::meta::Concept<
+    htls::meta::IsTemplateInstance<HaversackTraits>> auto
+TraitsOf(htls::meta::Type<HaversackT> t) {
   if constexpr (t != htls::meta::type_c<typename HaversackT::HaversackT>) {
     return TraitsOf(htls::meta::type_c<typename HaversackT::HaversackT>);
   }
@@ -1046,7 +1127,7 @@ struct GetSharedHelper {
                   HaversackT, typename HolderT::type>(),
               HaversackT, typename HolderT::type>(std::not_equal_to<>{});
 #endif
-    const auto& value = std::get<HolderT>(members).value;
+    const auto& value = std::get<HolderT>(members).value();
     // Non-nullness invariant is enforced by the ctor in production, so this
     // assert exists to prevent segfaults in tests.
 #ifndef NDEBUG

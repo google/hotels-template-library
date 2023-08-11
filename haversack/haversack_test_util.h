@@ -17,8 +17,8 @@
 
 #include <type_traits>
 
-#include "meta/basic_tuple.h"
 #include "haversack/haversack.h"
+#include "meta/basic_tuple.h"
 
 #ifndef HAVERSACK_GET_TESTER_MODE
 // If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
@@ -30,7 +30,10 @@
 namespace hotels::haversack {
 namespace internal {
 
-struct FakeCompatibility {
+struct FakeCompatibilityTag;
+
+template <>
+struct CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag> {
   static constexpr htls::meta::BasicTuple<> GetMatchChecks() {
     return htls::meta::BasicTuple<>();
   }
@@ -95,11 +98,16 @@ struct HaversackTestUtil {
 
     using AllDepsHaversack = typename decltype(htls::meta::FromTuple<Haversack>(
         TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
+    using AllDepsTuple =
+        typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
+                              .MemberTupleType())::type;
     // Instance of AllDepsHaversack, initially only containing nullptrs.
     auto result = AllDepsHaversack(
-        internal::CtorSentinel(), FakeCompatibility(),
-        typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
-                              .MemberTupleType())::type());
+        internal::CtorSentinel(),
+        CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
+        Apply([]<typename ...Ts>(htls::meta::Type<Ts> ...ts) {
+          return AllDepsTuple(Ts(SecurityBadge<HaversackTestUtil>())...);
+        }, AsTuple(htls::meta::type_c<AllDepsTuple>)));
 
     // Copy direct dependencies over from direct_deps_haversack into result.
     htls::meta::Apply(

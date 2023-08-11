@@ -114,7 +114,9 @@ class Haversack {
 
  public:
   // Get the traits for this Haversack.
-  static constexpr auto Traits() {
+  static constexpr htls::meta::Concept<
+      htls::meta::IsTemplateInstance<internal::HaversackTraits>> auto
+  Traits() {
     return internal::TraitsOf(htls::meta::type_c<Haversack>);
   }
   // Eagerly initialize Traits() for each haversack at compile-time and verify
@@ -125,18 +127,17 @@ class Haversack {
   // Public alias for the Haversack type.
   using HaversackT = Haversack;
 
-  // Builds a new haversack from members. Each argument must be a pointer (raw,
-  // unique, or shared) and may optionally be wrapped in not_null. Each pointer
-  // will be converted to a SharedProxy and raw pointers will be converted to
-  // non-owning SharedProxys. Arguments may not be nullptr value.
-  //
-  // Arguments may also be an instance of Tagged.
-  template <typename... UncoercedCtorArgs,
-            typename = std::enable_if_t<
-                !internal::FirstIsHaversack<UncoercedCtorArgs...>() &&
-                (size(htls::meta::Type(Traits().all_deps.Tuple())) == 0 ||
-                 sizeof...(UncoercedCtorArgs) >= 1) &&
-                (... && internal::kIsValidCtorArg<UncoercedCtorArgs>)>>
+  // Default ctor only for empty haversacks.
+  explicit Haversack()
+    requires(size(htls::meta::Type(Traits().all_deps.Tuple())) == 0)
+      : Haversack(CtorSentinel(),
+                  Traits().CtorCompatibility(htls::meta::MakeTypeSet(),
+                                             htls::meta::MakeBasicTuple()),
+                  std::tuple<>()) {}
+
+  // Builds a new haversack from members.
+  template <internal::UncoercedCtorArg... UncoercedCtorArgs>
+    requires(sizeof...(UncoercedCtorArgs) > 0)
   explicit Haversack(UncoercedCtorArgs... args)
       : Haversack(CtorSentinel(),
                   Traits().CtorCompatibility(
@@ -147,21 +148,17 @@ class Haversack {
                   std::tuple<>(), internal::CoerceCtorArg(std::move(args))...) {
   }
 
-  // Copies an existing haversack and merge new members into it. See the above
-  // ctor for documentation on allowed CtorArg types.
+  // Copies an existing haversack and merge new members into it.
   //
   // Note: This ctor is only enabled if args is non-empty so we
   // can ignore the warning about explicit unary ctors.
-  template <typename OtherHaversack, typename... UncoercedCtorArgs,
-            typename = std::enable_if_t<
-                internal::IsHaversack(htls::meta::type_c<OtherHaversack>) &&
-                std::greater<>()(sizeof...(UncoercedCtorArgs), 0) &&
-                (... && internal::kIsValidCtorArg<UncoercedCtorArgs>)>>
-  Haversack(OtherHaversack cxt,
+  template <internal::UncoercedCtorArg... UncoercedCtorArgs>
+    requires(sizeof...(UncoercedCtorArgs) > 0)
+  Haversack(internal::HaversackInstance auto cxt,
             UncoercedCtorArgs... args)  // NOLINT
       : Haversack(CtorSentinel(),
                   Traits().CtorCompatibility(
-                      OtherHaversack::Traits().all_deps,
+                      cxt.Traits().all_deps,
                       htls::meta::MakeBasicTuple(
                           htls::meta::type_c<
                               internal::CoercedCtorArg<UncoercedCtorArgs>>...)),
@@ -171,6 +168,8 @@ class Haversack {
   // Honeypot overload for when the arguments are (incorrectly) not pointers.
   // We use the 'unavailable' attribute to give a better compiler error than
   // just 'method is deleted'.
+  // TODO(cmgp): consider removing this overload now that concepts give better
+  // error messages.
   template <typename First, typename... Rest,
             bool kAnyInvalidCtorArgs =
                 // Any of the "rest" of the arguments are not valid,
@@ -193,30 +192,26 @@ class Haversack {
   //
   // NOTE: This operator is NOT explicit because it models a bespoke type
   // hierarchy (similar to the hierarchy between base-classes and sub-classes).
-  template <
-      typename OtherHaversack,
-      typename = std::enable_if_t<
-          internal::IsHaversack(htls::meta::type_c<OtherHaversack>) &&
-          htls::meta::type_c<OtherHaversack> !=
-              htls::meta::type_c<Haversack> &&
-          OtherHaversack::Traits()
-              .CtorCompatibility(Traits().all_deps, htls::meta::BasicTuple<>())
-              .IsCompatible()>>
+  template <internal::HaversackInstance OtherHaversack>
+    requires(htls::meta::type_c<OtherHaversack> !=
+                 htls::meta::type_c<Haversack> &&
+             OtherHaversack::Traits()
+                 .CtorCompatibility(Traits().all_deps,
+                                    htls::meta::BasicTuple<>())
+                 .IsCompatible())
   operator OtherHaversack() && {  // NOLINT
     return OtherHaversack(CtorSentinel(),
                           OtherHaversack::Traits().CtorCompatibility(
                               Traits().all_deps, htls::meta::BasicTuple<>()),
                           *std::move(members_));
   }
-  template <
-      typename OtherHaversack,
-      typename = std::enable_if_t<
-          internal::IsHaversack(htls::meta::type_c<OtherHaversack>) &&
-          htls::meta::type_c<OtherHaversack> !=
-              htls::meta::type_c<Haversack> &&
-          OtherHaversack::Traits()
-              .CtorCompatibility(Traits().all_deps, htls::meta::BasicTuple<>())
-              .IsCompatible()>>
+  template <internal::HaversackInstance OtherHaversack>
+    requires(htls::meta::type_c<OtherHaversack> !=
+                 htls::meta::type_c<Haversack> &&
+             OtherHaversack::Traits()
+                 .CtorCompatibility(Traits().all_deps,
+                                    htls::meta::BasicTuple<>())
+                 .IsCompatible())
   operator OtherHaversack() const& {  // NOLINT
     Haversack self = *this;
     return static_cast<OtherHaversack>(std::move(self));
@@ -254,7 +249,7 @@ class Haversack {
   //
   // Prefer to use the Haversack ctor if the final Haversack type is known.
   template <typename... WrappedTypes>
-  [[nodiscard]] auto Without() && {
+  [[nodiscard]] internal::HaversackInstance auto Without() && {
     constexpr htls::meta::TypeSet removes =
         MakeTypeSet(htls::meta::type_c<WrappedTypes>...);
     static_assert(sizeof...(WrappedTypes) > 0,
@@ -268,7 +263,7 @@ class Haversack {
         (Traits().all_deps - removes).Tuple()))::type(std::move(*this));
   }
   template <typename... WrappedTypes>
-  [[nodiscard]] auto Without() const& {
+  [[nodiscard]] internal::HaversackInstance auto Without() const& {
     Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Without<WrappedTypes...>();
   }
@@ -283,36 +278,41 @@ class Haversack {
   // Otherwise if ExplicitWrappedTypes are not provided, the types to be added
   // to the Haversack are deduced from the args and assumed to be
   // non-mutable.
-  template <typename... ExplicitWrappedTypes, typename... UncoercedCtorArgs,
-            typename = std::enable_if_t<sizeof...(ExplicitWrappedTypes) ==
-                                        sizeof...(UncoercedCtorArgs)>>
-  [[nodiscard]] auto Insert(UncoercedCtorArgs... args) && {
+  template <typename... ExplicitWrappedTypes>
+  [[nodiscard]] internal::HaversackInstance auto Insert(
+      internal::ExplicitInsertArg auto... args) &&
+    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args))
+  {
     return std::move(*this)
         .template ExplicitInsertImpl<ExplicitWrappedTypes...>(
             internal::CoerceCtorArg(std::move(args))...);
   }
-  template <typename... ExplicitWrappedTypes, typename... UncoercedCtorArgs,
-            typename = std::enable_if_t<sizeof...(ExplicitWrappedTypes) ==
-                                        sizeof...(UncoercedCtorArgs)>>
-  [[nodiscard]] auto Insert(UncoercedCtorArgs... args) const& {
+  template <typename... ExplicitWrappedTypes>
+  [[nodiscard]] internal::HaversackInstance auto Insert(
+      internal::ExplicitInsertArg auto... args) const&
+    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args))
+  {
     Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Insert<ExplicitWrappedTypes...>(
         std::move(args)...);
   }
-  template <typename... UncoercedCtorArgs>
-  [[nodiscard]] auto Insert(UncoercedCtorArgs... args) && {
+  [[nodiscard]] internal::HaversackInstance auto Insert(
+      internal::UncoercedCtorArg auto... args) && {
     return std::move(*this).InsertImpl(
         internal::CoerceCtorArg(std::move(args))...);
   }
-  template <typename... UncoercedCtorArgs>
-  [[nodiscard]] auto Insert(UncoercedCtorArgs... args) const& {
+  [[nodiscard]] internal::HaversackInstance auto Insert(
+      internal::UncoercedCtorArg auto... args) const& {
     Haversack self = *this;  // Make a copy of this.
     return std::move(self).Insert(std::move(args)...);
   }
 
   // Replace a value in the haversack with a new one of the same type.
-  template <typename ExplicitWrappedType = void, typename UncoercedCtorArg>
-  [[nodiscard]] Haversack Replace(UncoercedCtorArg arg) && {
+  template <typename ExplicitWrappedType = void,
+            internal::ExplicitInsertArg Arg>
+    requires(internal::UncoercedCtorArg<Arg> ||
+             !std::is_same_v<ExplicitWrappedType, void>)
+  [[nodiscard]] Haversack Replace(Arg arg) && {
     // If an ExplicitWrappedType is provided, ExplicitWrappedType is used as the
     // type to replace, otherwise the type to replace is deduced from the type
     // of the argument.
@@ -323,32 +323,39 @@ class Haversack {
                                                  htls::meta::BasicTuple<>())
                               .template FindMatch(
                                   htls::meta::type_c<
-                                      internal::CoercedCtorArg<
-                                          UncoercedCtorArg>>))::type,
+                                      internal::CoercedCtorArg<Arg>>))::type,
         ExplicitWrappedType>;
     static_assert(
         Contains(htls::meta::type_c<TypeToReplace>, Traits().all_deps));
-    std::get<internal::Holder<TypeToReplace>>(*members_).value =
-        internal::CoerceCtorArg(std::move(arg));
+    std::get<internal::Holder<TypeToReplace>>(*members_) =
+        internal::Holder<TypeToReplace>(
+            internal::CoerceCtorArg(std::move(arg)));
     return std::move(*this);
   }
-  template <typename ExplicitWrappedType = void, typename UncoercedCtorArg>
-  [[nodiscard]] Haversack Replace(UncoercedCtorArg arg) const& {
+  template <typename ExplicitWrappedType = void,
+            internal::ExplicitInsertArg Arg>
+    requires(internal::UncoercedCtorArg<Arg> ||
+             !std::is_same_v<ExplicitWrappedType, void>)
+  [[nodiscard]] Haversack Replace(Arg arg) const& {
     Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Replace<ExplicitWrappedType>(
         std::move(arg));
   }
 
   // Internal use only.
-  template <typename... AddedCtorArgs, typename Compatibility,
-            typename PropagatedTuple>
-  explicit Haversack(CtorSentinel, Compatibility compatibility,
-                     PropagatedTuple pt, AddedCtorArgs... added)
+  explicit Haversack(
+      CtorSentinel,
+      htls::meta::Concept<
+          htls::meta::IsTemplateInstance<internal::CompatibleArgs>> auto
+          compatibility,
+      htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>> auto pt,
+      internal::CoercedCtorArgC auto... added)
       : members_(std::make_shared<typename decltype(members_)::element_type>(
             internal::CatAndSortTuples(Traits().MemberTupleType(),
                                        compatibility, std::move(pt),
                                        std::move(added)...))) {
-    auto checks = Traits().AssertIsValidHaversack(compatibility);
+    htls::meta::BasicTuple checks =
+        Traits().AssertIsValidHaversack(compatibility);
     RunChecks(checks);
   }
 
@@ -356,7 +363,7 @@ class Haversack {
   // Assert that all WrappedTypes can be added to this haversack.
   template <typename... WrappedTypes>
   static constexpr void AssertAdds() {
-    constexpr auto adds =
+    constexpr htls::meta::TypeSet adds =
         MakeTypeSet(htls::meta::type_c<WrappedTypes>...);
     static_assert(sizeof...(WrappedTypes) > 0, "Must add at least one type.");
     static_assert(size((adds & Traits().all_deps).Tuple()) == 0,
@@ -371,19 +378,17 @@ class Haversack {
 
   // If no ExplicitWrappedTypes were passed to Insert, deduce the types from the
   // arguments and pass it to ExplicitInsertImpl as the ExplicitWrappedTypes.
-  template <typename... CtorArgs>
-  auto InsertImpl(CtorArgs... args) && {
+  template <internal::CoercedCtorArgC... CtorArgs>
+  internal::HaversackInstance auto InsertImpl(CtorArgs... args) && {
     return std::move(*this)
         .template ExplicitInsertImpl<
             typename decltype(internal::DeduceWrappedTypeFromCtorArg(
-                htls::meta::type_c<CtorArgs>))::type...>(
-            std::move(args)...);
+                htls::meta::type_c<CtorArgs>))::type...>(std::move(args)...);
   }
 
-  template <typename... ExplicitWrappedTypes, typename... CtorArgs,
-            typename = std::enable_if_t<sizeof...(ExplicitWrappedTypes) ==
-                                        sizeof...(CtorArgs)>>
-  auto ExplicitInsertImpl(CtorArgs... args) && {
+  template <typename... ExplicitWrappedTypes, typename... CtorArgs>
+    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(CtorArgs))
+  internal::HaversackInstance auto ExplicitInsertImpl(CtorArgs... args) && {
     AssertAdds<ExplicitWrappedTypes...>();
     using OtherHaversack = Haversack<ImplTs..., ExplicitWrappedTypes...>;
     return OtherHaversack(
@@ -452,9 +457,9 @@ template <auto&&... xs>
 struct Calls : internal::CallsBase {
   using IndividualCalls =
       htls::meta::BasicTuple<htls::meta::Type<Calls<xs>>...>;
-  using FirstType = std::decay_t<decltype((xs,...))>;
+  using FirstType = std::decay_t<decltype((xs, ...))>;
 };
-template <typename...>
+template <internal::HaversackInstance...>
 struct Deps {};
 
 // Provides is used to indicate to the Haversack that this Haversack's owner
@@ -577,7 +582,7 @@ struct Tagged {
       htls::meta::type_c<WrappedType>))::type>
       tagged;
 };
-template <typename Tag, typename UncoercedCtorArg>
+template <typename Tag, internal::UncoercedCtorArg UncoercedCtorArg>
 auto MakeTagged(UncoercedCtorArg arg) {
   constexpr htls::meta::Type element_type =
       internal::DeduceWrappedTypeFromCtorArg(

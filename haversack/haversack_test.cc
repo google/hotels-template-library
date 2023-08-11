@@ -344,6 +344,14 @@ TEST_F(HaversackTest, Replace) {
   EXPECT_THAT(cxt.Get<A>().i, 2);
 }
 
+TEST_F(HaversackTest, ReplaceWithNull) {
+  A a{1};
+  Haversack<A> cxt(&a);
+  EXPECT_THAT(cxt.Get<A>().i, 1);
+  EXPECT_DEATH((void)cxt.Replace(static_cast<const A*>(nullptr)),
+               "Pointers should never be null in haversack");
+}
+
 TEST_F(HaversackTest, SubclassInsert) {
   Haversack<Nonmoveable> cxt = Haversack<>().Insert<Nonmoveable>(
       std::make_shared<NonmoveableChild>(100, 200, 300));
