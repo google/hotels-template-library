@@ -115,6 +115,42 @@ constexpr void assert_is_helper(Compare cmp, ContextPtrs*... context_ptrs) {
 
 }  // namespace internal_assert_is
 
+template <typename T>
+concept NullablePointer =
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::unique_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    std::is_pointer_v<T> || 
+    std::is_same_v<T, std::nullptr_t>;
+template <typename T>
+concept NullablePointerOrRRef =  // TODO(cmgp): How do you inline this into
+                                 // NotNullPointer?
+    NullablePointer<T> || (std::is_rvalue_reference_v<T> &&
+                           NullablePointer<std::remove_reference_t<T>>);
+template <typename T>
+concept NotNullPointer = requires(T t) {
+  typename T::element_type;
+  { std::move(t).value() } -> NullablePointerOrRRef;
+  requires std::is_same_v<typename std::pointer_traits<std::remove_reference_t<
+                              decltype(std::move(t).value())>>::element_type,
+                          typename T::element_type>;
+};
+template <typename T>
+concept UncoercedCtorArg =
+    NullablePointer<T> || NotNullPointer<T> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>>;
+
+template <typename T>
+concept CoercedCtorArgC = 
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
+    htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>> ||
+    std::is_same_v<T, std::nullptr_t>;
+
+template <typename T>
+concept HaversackInstance =
+    htls::meta::Concept<typename T::HaversackT,
+                        htls::meta::IsTemplateInstance<Haversack>> &&
+    std::is_base_of_v<typename T::HaversackT, T>;
+
 // Perform a static_assert on N and M using cmp. The list of Context types will
 // be interleaved with Placeholder for easy parsing.
 template <std::size_t N, std::size_t M, typename... Context, typename Compare>
