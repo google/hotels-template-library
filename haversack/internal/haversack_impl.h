@@ -54,6 +54,20 @@
 #include "meta/type.h"
 #include "meta/type_set.h"
 
+#ifndef HAVERSACK_NO_ABSL
+
+#include <absl/log/log.h>
+#define HAVERSACK_DIE(msg) LOG(FATAL) << msg
+
+#else
+
+#define HAVERSACK_DIE(msg) \
+  std::cerr << msg;        \
+  assert(false);           \
+  abort()
+
+#endif
+
 namespace hotels::haversack {
 
 template <typename...>
@@ -408,12 +422,10 @@ struct ConvertOne {
     Holder holder = Impl(std::move(u));
     if constexpr (!IsNullable(htls::meta::type_c<TargetWrappedType>)) {
       if (!holder.value) {
-        std::cerr << "Pointers should never be null in haversack, but a "
-                  << htls::meta::DebugTypeName(
-                         htls::meta::type_c<TargetUnwrappedType*>)
-                  << " was null";
-        assert(holder.value);
-        abort();
+        HAVERSACK_DIE("Pointers should never be null in haversack, but a "
+                      << htls::meta::DebugTypeName(
+                             htls::meta::type_c<TargetUnwrappedType*>)
+                      << " was null");
       }
     }
     return holder;
@@ -1039,12 +1051,10 @@ struct GetSharedHelper {
     // assert exists to prevent segfaults in tests.
 #ifndef NDEBUG
     if (!IsNullable(GetMatchingWrappedType()) && !value) {
-      std::cerr << "A value for \""
-                << htls::meta::DebugTypeName(htls::meta::type_c<T>)
-                << "\" was not "
-                << "injected with MakeFakeHaversack but is used in this test.";
-      assert(value);
-      abort();
+      HAVERSACK_DIE(
+          "A value for \""
+          << htls::meta::DebugTypeName(htls::meta::type_c<T>) << "\" was not "
+          << "injected with MakeFakeHaversack but is used in this test.");
     }
 #endif
     return value;
@@ -1079,5 +1089,7 @@ struct GetSharedHelper {
 #undef HAVERSACK_GET_TESTER_MODE
 #undef UNSET_HAVERSACK_GET_TESTER_MODE
 #endif
+
+#undef HAVERSACK_DIE
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_HAVERSACK_IMPL_H_
