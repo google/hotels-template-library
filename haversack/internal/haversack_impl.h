@@ -1005,7 +1005,7 @@ template <typename... Ts>
 constexpr auto TraitsOf(htls::meta::Type<Haversack<Ts...>>) {
 #if HAVERSACK_GET_TESTER_MODE == 1
   // Emit a static_assert failure for each direct dependency in the haversack.
-  internal::Transform(
+  Transform(
       [](auto t) {
         using T = typename decltype(t)::type;
         assert_is<
