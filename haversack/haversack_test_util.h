@@ -64,25 +64,28 @@ struct HaversackTestUtil {
   }
 
  public:
-  template <
-      typename HaversackT, typename... SubHaversackTs, typename... Args,
-      typename RequiredTypesHaversack =
-          typename decltype(ValidateArgs<HaversackT, SubHaversackTs...>(
-              htls::meta::type_c<CoercedCtorArg<Args>>...))::type,
-      typename = std::enable_if_t<
-          !std::is_void_v<RequiredTypesHaversack> &&
-          internal::IsHaversack(htls::meta::type_c<HaversackT>) &&
-          (... && internal::IsHaversack(htls::meta::type_c<SubHaversackTs>))>>
+#if HAVERSACK_GET_TESTER_MODE > 0
+  template <typename HaversackT, typename... SubHaversackTs, typename... Args>
   static HaversackT MakeFakeHaversack(Args&&... args) {
-#if HAVERSACK_GET_TESTER_MODE == 1
-    // If HAVERSACK_GET_TESTER_MODE is on mode 1, create a haversack that is all
+    // If HAVERSACK_GET_TESTER_MODE is enabled, create a haversack that is all
     // nullptrs since we don't want to define the intermediate Haversack type
     // with direct dependencies since those direct dependencies would cause
     // hashes to be asserted on.
     return HaversackT(internal::CtorSentinel(), FakeCompatibility(),
                       typename decltype(TraitsOf(htls::meta::type_c<HaversackT>)
                                             .MemberTupleType())::type());
+  }
 #else
+  template <
+      typename HaversackT, typename... SubHaversackTs, typename... Args,
+      typename RequiredTypesHaversack =
+          typename decltype(ValidateArgs<HaversackT, SubHaversackTs...>(
+              htls::meta::type_c<CoercedCtorArg<Args> >...))::type,
+      typename = std::enable_if_t<
+          !std::is_void_v<RequiredTypesHaversack> &&
+          internal::IsHaversack(htls::meta::type_c<HaversackT>) &&
+          (... && internal::IsHaversack(htls::meta::type_c<SubHaversackTs>))> >
+  static HaversackT MakeFakeHaversack(Args&&... args) {
     // Haversack containing only the direct dependencies to HaversackT.
     // Also, any direct dependencies in SubHaversackTs that are in HaversackT.
     // This specifically doesn't include dependencies that are Provided
@@ -100,19 +103,19 @@ struct HaversackTestUtil {
 
     // Copy direct dependencies over from direct_deps_haversack into result.
     htls::meta::Apply(
-        // Capture by pointer because Apply does not support mutable invocables.
+        // Capture by pointer because Apply does not support mutable
+        // invocables.
         [result_ptr = &result,
          direct_ptr = &direct_deps_haversack](auto... types) {
-          ((std::get<typename decltype(types)::type>(
-                *result_ptr->members_) =
+          ((std::get<typename decltype(types)::type>(*result_ptr->members_) =
                 std::move(std::get<typename decltype(types)::type>(
                     *direct_ptr->members_))),
            ...);
         },
         htls::meta::AsTuple(htls::meta::Type(*direct_deps_haversack.members_)));
     return result;
-#endif
   }
+#endif
 };
 
 }  // namespace internal
