@@ -224,8 +224,9 @@ constexpr bool operator==(const internal_basic_tuple::BasicTupleImpl<
   }
 }
 
-template <typename... As, typename... Bs>
-constexpr bool operator!=(const BasicTuple<As...>& a,
+template <std::size_t... indexes, typename... As, typename... Bs>
+constexpr bool operator!=(const internal_basic_tuple::BasicTupleImpl<
+                              std::index_sequence<indexes...>, As...>& a,
                           const BasicTuple<Bs...>& b) {
   return !(a == b);
 }
