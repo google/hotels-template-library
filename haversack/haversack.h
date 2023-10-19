@@ -78,6 +78,7 @@
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_H_
 
 #include <cassert>
+#include <functional>
 #include <iostream>
 #include <tuple>
 #include <type_traits>
