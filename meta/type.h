@@ -15,8 +15,8 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_H_
 
+#include <cstddef>
 #include <string_view>
-#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -179,10 +179,22 @@ struct is_template_instance : public std::false_type {};
 template <typename... Ts, template <class...> class T>
 struct is_template_instance<T<Ts...>, T> : public std::true_type {};
 
-template <template <class...> class T, typename U>
-constexpr bool IsTemplateInstance(Type<U>) {
-  return is_template_instance<U, T>::value;
-}
+template <template <class...> class T>
+struct IsTemplateInstanceFunctor {
+  template <typename U>
+  constexpr bool operator()(Type<U>) const {
+    return is_template_instance<U, T>::value;
+  }
+};
+template <template <class...> class T>
+constexpr IsTemplateInstanceFunctor<T> IsTemplateInstance;
+
+template <typename T, auto Func>
+concept Concept = Func(type_c<T>);
+template <typename T>
+concept TypeTuple = AllOf(
+    []<typename U>(const U&) { return IsTemplateInstance<Type>(type_c<U>); },
+    T());
 
 }  // namespace htls::meta
 
