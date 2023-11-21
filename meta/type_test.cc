@@ -13,9 +13,10 @@
 // limitations under the License.
 
 #include "meta/type.h"
+#include <type_traits>
 
-#include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include "meta/basic_tuple.h"
 
 namespace htls::meta {
 namespace {
@@ -75,6 +76,13 @@ TEST(MetaTypeFunctionTest, IsConst) {
   EXPECT_EQ(func(type_c<const A>), a);
   EXPECT_EQ(func(a), a);
 }
+
+static_assert(!TypeTuple<A>);
+static_assert(!TypeTuple<BasicTuple<A, B>>);
+static_assert(!TypeTuple<BasicTuple<Type<A>, B>>);
+static_assert(!TypeTuple<BasicTuple<A, Type<B>>>);
+static_assert(TypeTuple<BasicTuple<Type<A>, Type<B>>>);
+static_assert(TypeTuple<BasicTuple<>>);
 
 }  // namespace
 }  // namespace htls::meta
