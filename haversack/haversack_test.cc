@@ -873,5 +873,21 @@ TEST(HaversackTestUtil, IndirectGetShared) {
   EXPECT_THAT(IndirectGetShared<G>(deps)->i, 1);
 }
 
+TEST(Haversack, IncompleteTypes) {
+  struct IncompleteType;
+
+  struct IncompleteHaversack : Haversack<IncompleteType, A> {
+    using HaversackT::HaversackT;
+  };
+
+  struct IncompleteParent : Haversack<Deps<IncompleteHaversack>, A> {
+    using HaversackT::HaversackT;
+  };
+
+  auto deps = MakeFakeHaversack<IncompleteParent>(std::make_shared<A>(1));
+  IncompleteHaversack child = deps;
+  EXPECT_EQ(child.Get<A>().i, 1);
+}
+
 }  // namespace
 }  // namespace hotels::haversack

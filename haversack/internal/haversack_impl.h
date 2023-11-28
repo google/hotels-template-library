@@ -170,6 +170,11 @@ concept HaversackInstance =
                         htls::meta::IsTemplateInstance<Haversack>> &&
     std::is_base_of_v<typename T::HaversackT, T>;
 
+template <typename T>
+concept IsComplete = htls::meta::IsValidExpr(
+    htls::meta::type_c<T>,
+    [](auto t) -> decltype(sizeof(typename decltype(t)::type)) {});
+
 }  // namespace internal
 
 template <auto&&...>
@@ -1013,7 +1018,10 @@ struct AccumulateHaversackTraits {
           .ExtendIndirectDeps(
               GetAllDepsFromChildHaversackMetadatas(child_haversacks))
           .ExtendChildHaversacks(child_haversacks);
-    } else if constexpr (std::is_base_of_v<CallsBase, T>) {
+
+      // Use std::conjunction_v here to lazily evaluate `std::is_base_of`.
+    } else if constexpr (std::conjunction_v<std::bool_constant<IsComplete<T>>,
+                                            std::is_base_of<CallsBase, T>>) {
       constexpr auto child_haversacks = GetTypesFromCalls(t);
       return sum
           .ExtendIndirectDeps(
