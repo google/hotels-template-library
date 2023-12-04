@@ -377,7 +377,29 @@ class Haversack {
              sizeof...(ExplicitWrappedTypes) == sizeof...(CtorArgs))
   internal::HaversackInstance auto ExplicitInsertImpl(CtorArgs... args) && {
     AssertAdds<ExplicitWrappedTypes...>();
-    using OtherHaversack = Haversack<ImplTs..., ExplicitWrappedTypes...>;
+
+    // Deducing the return Haversack type. The returned type is *roughly* the
+    // same type as `*this` except with the inserted types added as direct
+    // dependencies and any provided types that were inserted removed. *roughly*
+    // because the Provides directive is potentially shuffled around in the
+    // template list.
+    constexpr auto new_provides =
+        Traits().provided_deps -
+        htls::meta::MakeTypeSet(htls::meta::type_c<ExplicitWrappedTypes>...);
+    constexpr auto other_haversack_t = htls::meta::Apply(
+        [new_provides](auto... impl_ts) {
+          return htls::meta::type_c<Haversack<
+              typename decltype(FromTuple<Provides>(
+                  new_provides.Tuple()))::type,
+              typename decltype(impl_ts)::type..., ExplicitWrappedTypes...>>;
+        },
+        Filter(
+            [](auto impl_t) {
+              return !htls::meta::IsTemplateInstance<Provides>(impl_t);
+            },
+            htls::meta::MakeBasicTuple(htls::meta::type_c<ImplTs>...)));
+    using OtherHaversack = typename decltype(other_haversack_t)::type;
+
     return OtherHaversack(
         CtorSentinel(),
         OtherHaversack::Traits().CtorCompatibility(

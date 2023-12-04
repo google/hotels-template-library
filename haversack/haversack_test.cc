@@ -889,5 +889,12 @@ TEST(Haversack, IncompleteTypes) {
   EXPECT_EQ(child.Get<A>().i, 1);
 }
 
+TEST(Haversack, InsertProvidedType) {
+  using Child = Haversack<A>;
+  Haversack<Deps<Child>, Provides<A>> parent;
+  Child child = parent.Insert(std::make_shared<A>(1));
+  EXPECT_EQ(child.Get<A>().i, 1);
+}
+
 }  // namespace
 }  // namespace hotels::haversack
