@@ -142,8 +142,7 @@ class Haversack {
                       htls::meta::MakeBasicTuple(
                           htls::meta::type_c<
                               internal::CoercedCtorArg<UncoercedCtorArgs>>...)),
-                  *std::move(cxt).members_,
-                  internal::CoerceCtorArg(std::move(args))...) {}
+                  *cxt.members_, internal::CoerceCtorArg(std::move(args))...) {}
 
   // Honeypot overload for when the arguments are (incorrectly) not pointers.
   // We use the 'unavailable' attribute to give a better compiler error than
@@ -170,21 +169,21 @@ class Haversack {
   // of converting a Haversack to its subclass.
   //
   // NOTE: This operator is NOT explicit because it models a bespoke type
-  // hierarchy (similar to the hierarchy between base-classes and sub-classes).
+  // hierarchy (similar to the hierarchy between base-classes and subclasses).
   template <typename OtherHaversack>
   [[nodiscard]] operator OtherHaversack() &&
-    requires(internal::HaversackInstance<OtherHaversack> &&
-             !std::same_as<Haversack, OtherHaversack> &&
-             OtherHaversack::Traits()
-                 .CtorCompatibility(Traits().all_deps,
-                                    htls::meta::BasicTuple<>())
-                 .IsCompatible()) {
-    return OtherHaversack(
-        CtorSentinel(),
-        OtherHaversack::Traits().CtorCompatibility(
-            Traits().all_deps, htls::meta::BasicTuple<>()),
-        *std::move(members_));
-  }
+      requires(internal::HaversackInstance<OtherHaversack> &&
+               !std::same_as<Haversack, OtherHaversack> &&
+               OtherHaversack::Traits()
+                   .CtorCompatibility(Traits().all_deps,
+                                      htls::meta::BasicTuple<>())
+                   .IsCompatible()) {
+        return OtherHaversack(
+            CtorSentinel(),
+            OtherHaversack::Traits().CtorCompatibility(
+                Traits().all_deps, htls::meta::BasicTuple<>()),
+            *members_);
+      }
   template <typename OtherHaversack>
   [[nodiscard]] operator OtherHaversack() const&
         requires(internal::HaversackInstance<OtherHaversack> &&
@@ -192,7 +191,8 @@ class Haversack {
                  OtherHaversack::Traits()
                      .CtorCompatibility(Traits().all_deps,
                                         htls::meta::BasicTuple<>())
-                     .IsCompatible()) {
+                     .IsCompatible())
+  {
     Haversack self = *this;
     return static_cast<OtherHaversack>(std::move(self));
   }
@@ -311,9 +311,15 @@ class Haversack {
     }())::type;
     static_assert(
         Contains(htls::meta::type_c<TypeToReplace>, Traits().all_deps));
-    std::get<internal::Holder<TypeToReplace>>(*members_) =
+
+    // Pointer to non-const `members_` type by copy.
+    std::shared_ptr<typename decltype(Traits().MemberTupleType())::type>
+        new_members = std::make_shared<
+            typename decltype(Traits().MemberTupleType())::type>(*members_);
+    std::get<internal::Holder<TypeToReplace>>(*new_members) =
         internal::Holder<TypeToReplace>(
             internal::CoerceExplicitInsertArg(std::move(arg)));
+    members_ = std::move(new_members);
     return std::move(*this);
   }
   template <typename ExplicitWrappedType = void, typename Arg>
@@ -408,7 +414,7 @@ class Haversack {
                     htls::meta::type_c<ExplicitWrappedTypes>...),
             htls::meta::BasicTuple<>()),
         std::tuple_cat(
-            std::move(*members_),
+            *members_,
             std::make_tuple(
                 internal::ConvertOne<ExplicitWrappedTypes>()(args)...)));
   }
@@ -419,7 +425,8 @@ class Haversack {
   friend constexpr auto internal::TraitsOf(htls::meta::Type<T>);
   friend internal::HaversackTestUtil;
 
-  std::shared_ptr<typename decltype(Traits().MemberTupleType())::type> members_;
+  std::shared_ptr<const typename decltype(Traits().MemberTupleType())::type>
+      members_;
 };
 
 // Calls is used to indicate to the Haversack any relevant functions that are
