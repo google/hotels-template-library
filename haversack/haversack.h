@@ -172,27 +172,27 @@ class Haversack {
   // NOTE: This operator is NOT explicit because it models a bespoke type
   // hierarchy (similar to the hierarchy between base-classes and sub-classes).
   template <typename OtherHaversack>
-  [[nodiscard]] operator OtherHaversack() &&
     requires(internal::HaversackInstance<OtherHaversack> &&
              !std::same_as<Haversack, OtherHaversack> &&
              OtherHaversack::Traits()
                  .CtorCompatibility(Traits().all_deps,
                                     htls::meta::BasicTuple<>())
-                 .IsCompatible()) {
-    return OtherHaversack(
-        CtorSentinel(),
-        OtherHaversack::Traits().CtorCompatibility(
-            Traits().all_deps, htls::meta::BasicTuple<>()),
-        *std::move(members_));
+                 .IsCompatible())
+  [[nodiscard]] operator OtherHaversack() && {
+    return OtherHaversack(CtorSentinel(),
+                          OtherHaversack::Traits().CtorCompatibility(
+                              Traits().all_deps, htls::meta::BasicTuple<>()),
+                          *std::move(members_));
   }
   template <typename OtherHaversack>
   [[nodiscard]] operator OtherHaversack() const&
-        requires(internal::HaversackInstance<OtherHaversack> &&
-                 !std::same_as<Haversack, OtherHaversack> &&
-                 OtherHaversack::Traits()
-                     .CtorCompatibility(Traits().all_deps,
-                                        htls::meta::BasicTuple<>())
-                     .IsCompatible()) {
+    requires(internal::HaversackInstance<OtherHaversack> &&
+             !std::same_as<Haversack, OtherHaversack> &&
+             OtherHaversack::Traits()
+                 .CtorCompatibility(Traits().all_deps,
+                                    htls::meta::BasicTuple<>())
+                 .IsCompatible())
+  {
     Haversack self = *this;
     return static_cast<OtherHaversack>(std::move(self));
   }
@@ -355,7 +355,7 @@ class Haversack {
   }
 
   template <typename... CheckTypes>
-      requires((internal::CheckC<CheckTypes> && ...))
+    requires((internal::CheckC<CheckTypes> && ...))
   static constexpr void RunChecks(
       htls::meta::BasicTuple<htls::meta::Type<CheckTypes>...>) {
     (CheckTypes::template Check<CheckTypes>(), ...);
