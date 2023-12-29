@@ -352,6 +352,9 @@ class Holder {
       }
     }
   }
+  explicit Holder(WrappedType wt)
+    requires(IsTagged(htls::meta::type_c<WrappedType>))
+      : Holder(std::move(wt).tagged) {}
   // Only used in tests.
   explicit Holder(SecurityBadge<HaversackTestUtil>) : value_(nullptr) {}
 

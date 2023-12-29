@@ -723,6 +723,15 @@ TEST(HaversackNullable, ReplaceNullableStaticCast) {
   EXPECT_THAT(deps.Get<Nullable<A>>(), testing::IsNull());
 }
 
+TEST(HaversackNullable, ReplaceTagged) {
+  A a{1};
+  A aa{2};
+  struct MyTag {};
+  Haversack<Tagged<A, MyTag>> deps{&a};
+  deps = deps.Replace(MakeTagged<MyTag>(&aa));
+  EXPECT_THAT(deps.Get<MyTag>().i, 2);
+}
+
 TEST(Haversack, AllWrappers) {
   Haversack<A, KnownThreadSafe<A>, Nullable<A>, Nullable<KnownThreadSafe<A>>>
       deps = Haversack<>()
