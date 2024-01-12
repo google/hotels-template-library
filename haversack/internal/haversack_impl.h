@@ -34,6 +34,8 @@
 //   emitted. By building the relevant code that uses this haversack,
 //   compilation will fail if the dependency is used and succeed if the
 //   dependency is unused!
+#include <algorithm>
+#include <array>
 #ifndef HAVERSACK_GET_TESTER_MODE
 // If HAVERSACK_GET_TESTER_MODE is unset, use the default of 0 and unset it
 // again at the end of this file.
@@ -74,7 +76,7 @@ namespace hotels::haversack {
 
 template <typename...>
 struct Haversack;
-template <typename, typename>
+template <typename, typename, typename = std::bool_constant<false>>
 struct Tagged;
 template <typename>
 struct KnownThreadSafe;
@@ -200,6 +202,17 @@ constexpr void assert_is(Compare cmp) {
 template <typename T>
 using SharedProxy = std::shared_ptr<T>;
 
+template <size_t N>
+struct ConstexprString {
+  constexpr ConstexprString(const char (&s)[N]) {
+    std::copy_n(s, N, storage.begin());
+  }
+
+  // Note: consider storing an integer hash instead of the full string here for
+  // compile-time performance.
+  std::array<char, N> storage;
+};
+
 // Lower values should be outside larger values.
 enum class WrappingMetadataOrder {
   kOutOfOrder = -1,
@@ -216,9 +229,9 @@ struct WrappedTypeMetadata {
   bool known_thread_safe = false;
   WrappingMetadataOrder order = WrappingMetadataOrder::kEnd;
 
-  template <typename T, typename NewTag>
+  template <typename T, typename NewTag, typename Alias>
   constexpr WrappedTypeMetadata<NewTag> SetTag(
-      htls::meta::Type<Tagged<T, NewTag>>) const {
+      htls::meta::Type<Tagged<T, NewTag, Alias>>) const {
     WrappedTypeMetadata<NewTag> result;
     result.nullable = nullable;
     result.known_thread_safe = known_thread_safe;
@@ -367,7 +380,7 @@ class Holder {
 // Sentinel type to identify the root Haversack ctor.
 struct CtorSentinel {};
 
-template <typename, typename, typename, typename, typename>
+template <typename, typename, typename, typename, typename, typename>
 struct HaversackTraits;
 
 // Access the private traits of the Haversack.
@@ -826,16 +839,19 @@ template <
         ProvidedDepsT,
     htls::meta::Concept<htls::meta::IsTemplateInstance<htls::meta::TypeSet>>
         ChildHaversacksT,
+    htls::meta::Concept<htls::meta::IsTemplateInstance<htls::meta::TypeSet>>
+        AliasesT,
     typename BuilderSuccessT>
   requires requires {
     { BuilderSuccessT::value } -> std::same_as<const bool&>;
   }
 struct HaversackTraits<DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
-                       BuilderSuccessT> {
+                       AliasesT, BuilderSuccessT> {
   DirectDepsT direct;
   AllDepsT all_deps;
   ProvidedDepsT provided_deps;
   ChildHaversacksT child_haversacks;
+  AliasesT aliases;
   using BuilderSuccessType = BuilderSuccessT;
 
   constexpr auto AssertIsValidHaversack(
@@ -873,18 +889,21 @@ struct HaversackTraits<DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
   }
   constexpr HaversackTraits(DirectDepsT direct, AllDepsT all_deps,
                             ProvidedDepsT provided_deps,
-                            ChildHaversacksT child_haversacks, BuilderSuccessT)
+                            ChildHaversacksT child_haversacks, AliasesT aliases,
+                            BuilderSuccessT)
       : direct(direct),
         all_deps(all_deps),
         provided_deps(provided_deps),
-        child_haversacks(child_haversacks) {}
+        child_haversacks(child_haversacks),
+        aliases(aliases) {}
 };
 template <typename DirectDepsT, typename AllDepsT, typename ProvidedDepsT,
-          typename ChildHaversacksT, typename BuilderSuccessT>
+          typename ChildHaversacksT, typename AliasesT,
+          typename BuilderSuccessT>
 HaversackTraits(DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
-                BuilderSuccessT)
+                AliasesT, BuilderSuccessT)
     -> HaversackTraits<DirectDepsT, AllDepsT, ProvidedDepsT, ChildHaversacksT,
-                       BuilderSuccessT>;
+                       AliasesT, BuilderSuccessT>;
 
 template <typename... Ts>
 constexpr void AssertNoExtraProvides(htls::meta::TypeSet<Ts...>) {
@@ -909,7 +928,8 @@ constexpr void AssertNoExtraProvides(htls::meta::TypeSet<Ts...>) {
 // far.
 template <htls::meta::TypeTuple DirectDepsT,
           htls::meta::TypeTuple IndirectDepsT, htls::meta::TypeTuple ProvidesT,
-          htls::meta::TypeTuple ChildHaversacksT>
+          htls::meta::TypeTuple ChildHaversacksT,
+          htls::meta::TypeTuple AliasesT>
   requires(AllOf(
       []<typename T>(htls::meta::Type<T> t) {
         return htls::meta::IsTemplateInstance<ChildHaversackMetadata>(t);
@@ -920,24 +940,42 @@ struct HaversackTraitsBuilder {
   IndirectDepsT indirect;
   ProvidesT provides;
   ChildHaversacksT child_haversacks;
+  AliasesT aliases;
 
-  constexpr auto ExtendDirectDeps(htls::meta::TypeTuple auto t) const {
-    return internal::HaversackTraitsBuilder(direct + t, indirect, provides,
-                                            child_haversacks);
+  template <typename T>
+  constexpr auto ExtendDirectDeps(htls::meta::Type<T> t) const {
+    if constexpr (htls::meta::ValidExprOr(
+                      t,
+                      [](auto u)
+                          -> std::enable_if_t<
+                              htls::meta::IsTemplateInstance<Tagged>(u), bool> {
+                        return decltype(u)::type::kAlias;
+                      },
+                      false)) {
+      return internal::HaversackTraitsBuilder(
+          direct +
+              htls::meta::MakeBasicTuple(htls::meta::type_c<typename T::type>),
+          indirect, provides, child_haversacks,
+          aliases + htls::meta::MakeBasicTuple(t));
+    } else {
+      return internal::HaversackTraitsBuilder(
+          direct + htls::meta::MakeBasicTuple(t), indirect, provides,
+          child_haversacks, aliases);
+    }
   }
   constexpr auto ExtendIndirectDeps(htls::meta::TypeTuple auto t) const {
     static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
     return internal::HaversackTraitsBuilder(direct, indirect + t, provides,
-                                            child_haversacks);
+                                            child_haversacks, aliases);
   }
   constexpr auto ExtendProvides(htls::meta::TypeTuple auto t) const {
     static_assert(size(htls::meta::type_c<DirectDepsT>) == 0,
                   "All `Calls` and other directives must come before any "
                   "direct dependencies.");
     return internal::HaversackTraitsBuilder(direct, indirect, provides + t,
-                                            child_haversacks);
+                                            child_haversacks, aliases);
   }
   template <htls::meta::TypeTuple Children>
     requires(AllOf(
@@ -946,8 +984,8 @@ struct HaversackTraitsBuilder {
         },
         Children()))
   constexpr auto ExtendChildHaversacks(Children children) const {
-    return internal::HaversackTraitsBuilder(direct, indirect, provides,
-                                            child_haversacks + children);
+    return internal::HaversackTraitsBuilder(
+        direct, indirect, provides, child_haversacks + children, aliases);
   }
 
   constexpr auto Build() const {
@@ -972,9 +1010,10 @@ struct HaversackTraitsBuilder {
     AssertNoExtraProvides(superfluous_provides);
     static_assert(all_direct_deps_unique,
                   "Each direct dependency should be unique.");
-    constexpr htls::meta::BasicTuple tags = Filter(
-        [](auto t) { return t != htls::meta::type_c<void>; },
-        Transform([](auto t) { return GetTag(t); }, direct_dep_set.Tuple()));
+    constexpr htls::meta::BasicTuple tags =
+        Filter([](auto t) { return t != htls::meta::type_c<void>; },
+               Transform([](auto t) { return GetTag(t); },
+                         direct_dep_set.Tuple() + self.aliases));
     constexpr htls::meta::TypeSet tags_set = make_type_set(tags);
     constexpr bool all_tags_unique = size(tags) == size(tags_set.Tuple());
     static_assert(all_tags_unique,
@@ -983,6 +1022,14 @@ struct HaversackTraitsBuilder {
     constexpr bool no_tags_as_deps =
         size((direct_dep_set & tags_set).Tuple()) == 0;
     static_assert(no_tags_as_deps, "Don't use Tag types as dependencies.");
+
+    constexpr htls::meta::TypeSet aliases_set = make_type_set(self.aliases);
+    constexpr htls::meta::TypeSet aliased_set = make_type_set(Transform(
+        []<typename T>(htls::meta::Type<T>) {
+          return htls::meta::type_c<typename T::type>;
+        },
+        self.aliases));
+
     // Failing a static_assert does not interrupt compilation so we still
     // explicitly pass this BuilderSuccessT every time.
     using BuilderSuccessT =
@@ -991,25 +1038,27 @@ struct HaversackTraitsBuilder {
                            all_direct_deps_unique && all_tags_unique &&
                            no_tags_as_deps>;
     return HaversackTraits(direct_dep_set, dep_set - provide_set, provide_set,
-                           make_type_set(self.child_haversacks),
+                           make_type_set(self.child_haversacks), aliases_set,
                            BuilderSuccessT());
   }
 
   constexpr HaversackTraitsBuilder() = default;
   constexpr HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT,
-                                   ChildHaversacksT) {}
+                                   ChildHaversacksT, AliasesT) {}
 };
 template <typename DirectDepsT, typename IndirectDepsT, typename ProvidesT,
-          typename ChildHaversacksT>
-HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT, ChildHaversacksT)
+          typename ChildHaversacksT, typename AliasesT>
+HaversackTraitsBuilder(DirectDepsT, IndirectDepsT, ProvidesT, ChildHaversacksT,
+                       AliasesT)
     -> HaversackTraitsBuilder<DirectDepsT, IndirectDepsT, ProvidesT,
-                              ChildHaversacksT>;
+                              ChildHaversacksT, AliasesT>;
 
 // Initial type/value to be used when accumulating with
 // AccumulateHaversackTraits.
 using EmptyHaversackTraitsBuilder =
     HaversackTraitsBuilder<htls::meta::BasicTuple<>, htls::meta::BasicTuple<>,
-                           htls::meta::BasicTuple<>, htls::meta::BasicTuple<>>;
+                           htls::meta::BasicTuple<>, htls::meta::BasicTuple<>,
+                           htls::meta::BasicTuple<>>;
 
 // Accumulation functor which appends the type being accumulated to the correct
 // field of HaversackTraitsBuilder.
@@ -1037,7 +1086,7 @@ struct AccumulateHaversackTraits {
               GetAllDepsFromChildHaversackMetadatas(child_haversacks))
           .ExtendChildHaversacks(child_haversacks);
     } else {
-      return sum.ExtendDirectDeps(htls::meta::MakeBasicTuple(t));
+      return sum.ExtendDirectDeps(t);
     }
   }
 };
@@ -1204,22 +1253,30 @@ struct GetSharedHelper {
   // Returns a Type<U> where U is the WrappedType in the Haversack that T
   // matches. If there is no match, it returns Type<void>.
   constexpr static auto GetMatchingWrappedType() {
+    constexpr auto tag_matches = [](auto t_arg) {
+      constexpr htls::meta::Type t = t_arg;
+      return GetTag(t) == htls::meta::type_c<T>;
+    };
+
     if constexpr (Contains(htls::meta::type_c<T>,
                            TraitsOf(htls::meta::type_c<HaversackT>).direct)) {
       return htls::meta::type_c<T>;
+    } else if constexpr (constexpr htls::meta::BasicTuple matching_tags =
+                             Filter(tag_matches,
+                                    TraitsOf(htls::meta::type_c<HaversackT>)
+                                        .direct.Tuple());
+                         size(matching_tags) == 1) {
+      htls::meta::Type real_type = htls::meta::get<0>(matching_tags);
+      return real_type;
+    } else if constexpr (constexpr htls::meta::BasicTuple matching_aliases =
+                             Filter(tag_matches,
+                                    TraitsOf(htls::meta::type_c<HaversackT>)
+                                        .aliases.Tuple());
+                         size(matching_aliases) == 1) {
+      htls::meta::Type real_type = htls::meta::get<0>(matching_aliases);
+      return htls::meta::type_c<typename decltype(real_type)::type::type>;
     } else {
-      constexpr htls::meta::BasicTuple matching_tags = Filter(
-          [](auto t_arg) {
-            constexpr htls::meta::Type t = t_arg;
-            return GetTag(t) == htls::meta::type_c<T>;
-          },
-          TraitsOf(htls::meta::type_c<HaversackT>).direct.Tuple());
-      if constexpr (size(matching_tags) == 1) {
-        htls::meta::Type real_type = htls::meta::get<0>(matching_tags);
-        return real_type;
-      } else {
-        return htls::meta::type_c<void>;
-      }
+      return htls::meta::type_c<void>;
     }
   }
 };

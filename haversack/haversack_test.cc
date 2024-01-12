@@ -928,5 +928,58 @@ TEST(Haversack, InsertProvidedType) {
   EXPECT_EQ(child.Get<A>().i, 1);
 }
 
+TEST(Haversack, ValueTags) {
+  Haversack<STagged<A, "a">> deps(MakeTagged<"a">(std::make_shared<A>(1)));
+  EXPECT_EQ((deps.Get<STagged<A, "a">>().i), 1);
+  EXPECT_EQ((deps.Get<"a">().i), 1);
+}
+
+TEST(Haversack, TagAlias) {
+  using ChildA = Haversack<A>;
+  using ChildB = Haversack<STaggedAlias<A, "a">>;
+  Haversack<Deps<ChildA, ChildB>> deps(std::make_shared<A>(1));
+  // Haversack<Deps<ChildA, ChildB>> deps2(
+  //     MakeTagged<"a">(std::make_shared<A>(1)));
+  ChildB child = deps;
+  EXPECT_EQ(child.Get<"a">().i, 1);
+  EXPECT_EQ(child.Get<A>().i, 1);
+}
+
+// // Note: The Haversack constructor doesn't recognize `MakeTagged` for an
+// // alias. This is only very minorly useful so it is not currently
+// // implemented.
+// TEST(Haversack, TagAliasCtor) {
+//   using ChildA = Haversack<A>;
+//   using ChildB = Haversack<STaggedAlias<A, "a">>;
+//   Haversack<Deps<ChildA, ChildB>> deps2(
+//       MakeTagged<"a">(std::make_shared<A>(1)));
+//   ChildB child = deps;
+//   EXPECT_EQ(child.Get<"a">().i, 1);
+//   EXPECT_EQ(child.Get<A>().i, 1);
+// }
+
+TEST(Haversack, CannotMixTagAndAlias) {
+  EXPECT_NON_COMPILE(
+      "A Haversack cannot have multiple direct dependencies with the same Tag",
+      (void)sizeof(Haversack<STagged<A, "a">, STaggedAlias<B, "a">>));
+}
+
+TEST(Haversack, CannotUseAliasesMultipleTimes) {
+  EXPECT_NON_COMPILE(
+      "A Haversack cannot have multiple direct dependencies with the same Tag",
+      (void)sizeof(Haversack<STaggedAlias<A, "a">, STaggedAlias<B, "a">>));
+}
+
+TEST(Haversack, CannotUseAliasAndUntagged) {
+  EXPECT_NON_COMPILE("Each direct dependency should be unique",
+                     (void)sizeof(Haversack<STaggedAlias<A, "a">, A>));
+}
+
+TEST(Haversack, CannotUseMultipleAliases) {
+  EXPECT_NON_COMPILE(
+      "Each direct dependency should be unique",
+      (void)sizeof(Haversack<STaggedAlias<A, "a">, STaggedAlias<A, "b">>));
+}
+
 }  // namespace
 }  // namespace hotels::haversack
