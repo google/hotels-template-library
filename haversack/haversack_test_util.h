@@ -15,6 +15,7 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_UTIL_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_TEST_UTIL_H_
 
+#include <memory>
 #include <type_traits>
 
 #include "haversack/haversack.h"
@@ -108,7 +109,7 @@ struct HaversackTestUtil {
         typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
                               .MemberTupleType())::type;
     // Instance of AllDepsHaversack, initially only containing nullptrs.
-    auto result = AllDepsHaversack(
+    AllDepsHaversack result(
         internal::CtorSentinel(),
         CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
         htls::meta::Apply(
@@ -117,18 +118,25 @@ struct HaversackTestUtil {
             },
             AsTuple(htls::meta::type_c<AllDepsTuple>)));
 
+    // Pointer to non-const `members_` type by copy.
+    std::shared_ptr<typename decltype(TraitsOf(
+                                          htls::meta::type_c<AllDepsHaversack>)
+                                          .MemberTupleType())::type>
+        new_members = std::make_shared<
+            typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
+                                  .MemberTupleType())::type>(*result.members_);
     // Copy direct dependencies over from direct_deps_haversack into result.
     htls::meta::Apply(
         // Capture by pointer because Apply does not support mutable
         // invocables.
-        [result_ptr = &result,
-         direct_ptr = &direct_deps_haversack](auto... types) {
-          ((std::get<typename decltype(types)::type>(*result_ptr->members_) =
+        [&new_members, &direct_deps_haversack](auto... types) {
+          ((std::get<typename decltype(types)::type>(*new_members) =
                 std::move(std::get<typename decltype(types)::type>(
-                    *direct_ptr->members_))),
+                    *direct_deps_haversack.members_))),
            ...);
         },
         htls::meta::AsTuple(htls::meta::Type(*direct_deps_haversack.members_)));
+    result.members_ = std::move(new_members);
     return result;
   }
 #endif
