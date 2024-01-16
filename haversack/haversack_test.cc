@@ -336,6 +336,18 @@ TEST_F(HaversackTest, InsertRaw) {
   EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
 }
 
+TEST_F(HaversackTest, InsertSafe) {
+  A a{1};
+  Haversack<A> base(&a);
+  Haversack<A, Nonmoveable> cxt =
+      base.Insert(std::make_shared<Nonmoveable>(100, 200));
+  EXPECT_THAT(cxt.Get<Nonmoveable>().i, 100);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().j, 200);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
+  EXPECT_EQ(cxt.Get<A>().i, 1);
+  EXPECT_EQ(base.Get<A>().i, 1);
+}
+
 TEST_F(HaversackTest, Replace) {
   A a{1}, aa{2};
   Haversack<A> cxt(&a);
@@ -350,6 +362,17 @@ TEST_F(HaversackTest, ReplaceWithNull) {
   EXPECT_THAT(cxt.Get<A>().i, 1);
   EXPECT_DEATH((void)cxt.Replace(static_cast<const A*>(nullptr)),
                "Pointers should never be null in haversack");
+}
+
+TEST_F(HaversackTest, ReplaceSafe) {
+  A a{1}, aa{2};
+  Haversack<A> cxt(&a);
+  Haversack<A> copy = cxt;
+  EXPECT_THAT(cxt.Get<A>().i, 1);
+  EXPECT_THAT(copy.Get<A>().i, 1);
+  cxt = cxt.Replace(&aa);
+  EXPECT_THAT(cxt.Get<A>().i, 2);
+  EXPECT_THAT(copy.Get<A>().i, 1);
 }
 
 TEST_F(HaversackTest, SubclassInsert) {
