@@ -223,6 +223,32 @@ class Haversack {
       return *GetShared<T>();
     }
   }
+  template <internal::ConstexprString S,
+            typename GetSharedHelper = internal::GetSharedHelper<
+                std::integral_constant<decltype(S), S>, Haversack>>
+  [[nodiscard]] decltype(auto) GetShared() const HTLS_ENABLE_IF_ATTRIBUTE(
+      GetSharedHelper::GetMatchingWrappedType() != htls::meta::type_c<void>,
+      "Requested type is not a direct dependency in the Haversack.") {
+    return GetSharedHelper::Get(*members_);
+  }
+
+  // Gets a reference to the T member.
+  //
+  // If T matches KnownThreadSafe<U>, a mutable `U&` is returned;
+  // otherwise a `const T&` reference is returned.
+  template <internal::ConstexprString S,
+            typename GetSharedHelper = internal::GetSharedHelper<
+                std::integral_constant<decltype(S), S>, Haversack>>
+  [[nodiscard]] decltype(auto) Get() const HTLS_ENABLE_IF_ATTRIBUTE(
+      GetSharedHelper::GetMatchingWrappedType() != htls::meta::type_c<void>,
+      "Requested type is not a direct dependency in the Haversack.") {
+    if constexpr (internal::IsNullable(
+                      GetSharedHelper::GetMatchingWrappedType())) {
+      return GetShared<S>().get();
+    } else {
+      return *GetShared<S>();
+    }
+  }
 
   // Gets a new haversack without the WrappedTypes types.
   //
@@ -589,12 +615,45 @@ void main() {
   // prints: 2
 }
 // ****************************************************************************/
-template <typename WrappedType, typename Tag>
+template <typename WrappedType, typename Tag, typename AliasC>
 struct Tagged {
+  static constexpr bool kAlias = AliasC::value;
+  using type = WrappedType;
+
   internal::SharedProxy<typename decltype(internal::kUnwrapTypeWrappers(
       htls::meta::type_c<WrappedType>))::type>
       tagged;
 };
+
+// TaggedAlias works very similarly to Tagged except that the tag does not
+// define a new type value in the Haversack. TaggedAlias simply provides an
+// alternative way to access the value from the Haversack.
+//
+// Example:
+/*******************************************************************************
+struct Alpha {
+  Alpha(int v) : value(v) {}
+  int value = 0;
+};
+struct TagA {};
+
+void main() {
+  using ChildA = Haversack<Alpha>;
+  using ChildB = Haversack<TaggedAlias<Alpha, TagA>>;
+
+  // Note: Only one dependency is passed to the constructor.
+  Haversack<Deps<ChildA, ChildB>> deps(std::make_shared<Alpha>(1));
+  ChildA child_a = deps;
+  ChildB child_b = deps;
+  LOG(INFO) << child_a.Get<Alpha>().value;
+  // prints: 1
+  LOG(INFO) << child_b.Get<TagA>().value
+  // prints: 1
+}
+// ****************************************************************************/
+template <typename WrappedType, typename Tag>
+using TaggedAlias = Tagged<WrappedType, Tag, std::bool_constant<true>>;
+
 template <typename Tag, typename UncoercedCtorArg>
   requires(internal::UncoercedCtorArg<UncoercedCtorArg>)
 auto MakeTagged(UncoercedCtorArg arg) {
@@ -602,6 +661,41 @@ auto MakeTagged(UncoercedCtorArg arg) {
       internal::DeduceWrappedTypeFromCtorArg(
           htls::meta::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
   return Tagged<typename decltype(element_type)::type, Tag>{
+      .tagged = internal::CoerceCtorArg(arg)};
+}
+
+// STagged and STaggedAlias work exactly as Tagged and TaggedAlias,
+// respectively, except that the tag should be a string literal instead of a
+// type.
+//
+// Example:
+/*******************************************************************************
+struct Alpha {
+  Alpha(int v) : value(v) {}
+  int value = 0;
+};
+
+void main() {
+  Haversack<STagged<Alpha, "a">> deps(
+      MakeTagged<"a">(std::make_shared<Alpha>(1)));
+  LOG(INFO) << deps.Get<"a">().value;
+  // prints: 1
+}
+// ****************************************************************************/
+template <typename WrappedType, internal::ConstexprString Str>
+using STagged = Tagged<WrappedType, std::integral_constant<decltype(Str), Str>>;
+template <typename WrappedType, internal::ConstexprString Str>
+using STaggedAlias =
+    Tagged<WrappedType, std::integral_constant<decltype(Str), Str>,
+           std::bool_constant<true>>;
+
+template <internal::ConstexprString Str, typename UncoercedCtorArg>
+  requires(internal::UncoercedCtorArg<UncoercedCtorArg>)
+auto MakeTagged(UncoercedCtorArg arg) {
+  constexpr htls::meta::Type element_type =
+      internal::DeduceWrappedTypeFromCtorArg(
+          htls::meta::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
+  return STagged<typename decltype(element_type)::type, Str>{
       .tagged = internal::CoerceCtorArg(arg)};
 }
 
