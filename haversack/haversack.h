@@ -408,14 +408,11 @@ class Haversack {
     return OtherHaversack(
         CtorSentinel(),
         OtherHaversack::Traits().CtorCompatibility(
-            Traits().all_deps |
-                htls::meta::MakeTypeSet(
-                    htls::meta::type_c<ExplicitWrappedTypes>...),
-            htls::meta::BasicTuple<>()),
+            OtherHaversack::Traits().all_deps, htls::meta::BasicTuple<>()),
         std::tuple_cat(
             *members_,
-            std::make_tuple(
-                internal::ConvertOne<ExplicitWrappedTypes>()(args)...)));
+            std::make_tuple(internal::ConvertInsertArg<ExplicitWrappedTypes>(
+                std::move(args))...)));
   }
 
   template <typename...>

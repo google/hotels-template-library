@@ -533,10 +533,6 @@ struct ConvertOne {
   constexpr Holder<TargetWrappedType> operator()(U u) const {
     return Impl(std::move(u));
   }
-  template <std::same_as<std::nullptr_t> U>
-  constexpr Holder<TargetWrappedType> operator()(U) const {
-    return Holder<TargetWrappedType>{nullptr};
-  }
 };
 
 // A Converter<TargetWrappedTypes...> has operator() to convert any valid
@@ -547,6 +543,16 @@ template <typename... TargetWrappedTypes>
 struct Converter : ConvertOne<TargetWrappedTypes>... {
   using ConvertOne<TargetWrappedTypes>::operator()...;
 };
+
+template <typename TargetWrappedType, CoercedExplicitInsertArg T>
+constexpr auto ConvertInsertArg(T t) {
+  if constexpr (IsNullable(htls::meta::type_c<TargetWrappedType>) &&
+                std::is_same_v<T, nullptr_t>) {
+    return Holder<TargetWrappedType>{nullptr};
+  } else {
+    return ConvertOne<TargetWrappedType>()(std::move(t));
+  }
+}
 
 // Determine if and how the types in SourceCtorArgs can be uniquely converted to
 // the types in TargetWrappedTypes.
