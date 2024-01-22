@@ -92,7 +92,7 @@ class Haversack {
 
  public:
   // Get the traits for this Haversack.
-  static constexpr htls::meta::Concept<
+  static consteval htls::meta::Concept<
       htls::meta::IsTemplateInstance<internal::HaversackTraits>> auto
   Traits() {
     return internal::TraitsOf(htls::meta::type_c<Haversack>);
@@ -377,7 +377,7 @@ class Haversack {
  private:
   // Assert that all WrappedTypes can be added to this haversack.
   template <typename... WrappedTypes>
-  static constexpr void AssertAdds() {
+  static consteval void AssertAdds() {
     constexpr htls::meta::TypeSet adds =
         MakeTypeSet(htls::meta::type_c<WrappedTypes>...);
     static_assert(sizeof...(WrappedTypes) > 0, "Must add at least one type.");
@@ -387,7 +387,7 @@ class Haversack {
 
   template <typename... CheckTypes>
       requires((internal::CheckC<CheckTypes> && ...))
-  static constexpr void RunChecks(
+  static consteval void RunChecks(
       htls::meta::BasicTuple<htls::meta::Type<CheckTypes>...>) {
     (CheckTypes::template Check<CheckTypes>(), ...);
   }
@@ -444,7 +444,7 @@ class Haversack {
   template <typename...>
   friend class Haversack;
   template <typename T>
-  friend constexpr auto internal::TraitsOf(htls::meta::Type<T>);
+  friend consteval auto internal::TraitsOf(htls::meta::Type<T>);
   friend internal::HaversackTestUtil;
 
   std::shared_ptr<const typename decltype(Traits().MemberTupleType())::type>
