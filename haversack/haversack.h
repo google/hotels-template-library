@@ -527,8 +527,8 @@ void main() {
  Bravo bravo;
 
  // GrandParentHaversack needs an Alpha because its descendant needs one, but it
- // doesn not need a Bravo because one of GrandParentHaversack's intermediate
- // descendants provides Bravo.
+ // does not need a Bravo because one of GrandParentHaversack's intermediate
+ // descendants (ParentHaversack) provides Bravo.
  GrandParentHaversack gp(&alpha);
 
  // ParentHaversack has an Alpha but not a Bravo because its owner will provide
