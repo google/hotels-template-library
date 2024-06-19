@@ -56,6 +56,7 @@
 
 #include <cassert>
 #include <concepts>
+#include <cstddef>
 #include <memory>
 #include <tuple>
 #include <type_traits>
@@ -399,7 +400,7 @@ class Haversack {
   internal::HaversackInstance auto InsertImpl(CtorArgs... args) && {
     return std::move(*this)
         .template ExplicitInsertImpl<
-            typename decltype(internal::DeduceWrappedTypeFromCtorArg(
+            typename decltype(internal::DeduceWrappedTypeFromInsertArg(
                 htls::meta::type_c<CtorArgs>))::type...>(std::move(args)...);
   }
 
@@ -437,7 +438,7 @@ class Haversack {
             OtherHaversack::Traits().all_deps, htls::meta::BasicTuple<>()),
         std::tuple_cat(
             *members_,
-            std::make_tuple(internal::ConvertInsertArg<ExplicitWrappedTypes>(
+            std::make_tuple(internal::ConvertOne<ExplicitWrappedTypes>()(
                 std::move(args))...)));
   }
 
@@ -619,10 +620,27 @@ template <typename WrappedType, typename Tag, typename AliasC>
 struct Tagged {
   static constexpr bool kAlias = AliasC::value;
   using type = WrappedType;
+  using UnwrappedType = typename decltype(internal::kUnwrapTypeWrappers(
+      htls::meta::type_c<WrappedType>))::type;
+  using MemberType =
+      std::conditional_t<std::same_as<UnwrappedType, void>, nullptr_t,
+                         internal::SharedProxy<UnwrappedType>>;
 
-  internal::SharedProxy<typename decltype(internal::kUnwrapTypeWrappers(
-      htls::meta::type_c<WrappedType>))::type>
-      tagged;
+  template <typename T>
+    requires(std::is_convertible_v<T, MemberType> && !internal::Nullptr<T>)
+  explicit Tagged(T t) : tagged(std::move(t)) {}
+  explicit Tagged(nullptr_t)
+    requires(internal::IsNullable(htls::meta::type_c<WrappedType>) ||
+             std::same_as<MemberType, nullptr_t>)
+      : Tagged(MemberType()) {}
+  template <typename OtherTagged>
+  Tagged(OtherTagged ot)
+    requires(internal::IsTagged(htls::meta::type_c<OtherTagged>) &&
+             htls::meta::type_c<Tag> ==
+                 internal::GetTag(htls::meta::type_c<OtherTagged>))
+      : Tagged(std::move(ot).tagged) {}
+
+  MemberType tagged;
 };
 
 // TaggedAlias works very similarly to Tagged except that the tag does not
@@ -654,14 +672,15 @@ void main() {
 template <typename WrappedType, typename Tag>
 using TaggedAlias = Tagged<WrappedType, Tag, std::bool_constant<true>>;
 
-template <typename Tag, typename UncoercedCtorArg>
-  requires(internal::UncoercedCtorArg<UncoercedCtorArg>)
-auto MakeTagged(UncoercedCtorArg arg) {
+template <typename Tag, typename ExplicitInsertArg>
+  requires(internal::ExplicitInsertArg<ExplicitInsertArg>)
+auto MakeTagged(ExplicitInsertArg arg) {
   constexpr htls::meta::Type element_type =
-      internal::DeduceWrappedTypeFromCtorArg(
-          htls::meta::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
-  return Tagged<typename decltype(element_type)::type, Tag>{
-      .tagged = internal::CoerceCtorArg(arg)};
+      internal::DeduceWrappedTypeFromMakeTaggedArg(
+          htls::meta::type_c<decltype(internal::CoerceExplicitInsertArg(
+              std::move(arg)))>);
+  return Tagged<typename decltype(element_type)::type, Tag>(
+      internal::CoerceExplicitInsertArg(std::move(arg)));
 }
 
 // STagged and STaggedAlias work exactly as Tagged and TaggedAlias,
@@ -689,14 +708,15 @@ using STaggedAlias =
     Tagged<WrappedType, std::integral_constant<decltype(Str), Str>,
            std::bool_constant<true>>;
 
-template <internal::ConstexprString Str, typename UncoercedCtorArg>
-  requires(internal::UncoercedCtorArg<UncoercedCtorArg>)
-auto MakeTagged(UncoercedCtorArg arg) {
+template <internal::ConstexprString Str, typename ExplicitInsertArg>
+  requires(internal::ExplicitInsertArg<ExplicitInsertArg>)
+auto MakeTagged(ExplicitInsertArg arg) {
   constexpr htls::meta::Type element_type =
-      internal::DeduceWrappedTypeFromCtorArg(
-          htls::meta::type_c<internal::CoercedCtorArg<UncoercedCtorArg>>);
-  return STagged<typename decltype(element_type)::type, Str>{
-      .tagged = internal::CoerceCtorArg(arg)};
+      internal::DeduceWrappedTypeFromMakeTaggedArg(
+          htls::meta::type_c<decltype(internal::CoerceExplicitInsertArg(
+              std::move(arg)))>);
+  return STagged<typename decltype(element_type)::type, Str>(
+      internal::CoerceExplicitInsertArg(std::move(arg)));
 }
 
 }  // namespace hotels::haversack

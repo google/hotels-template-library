@@ -14,6 +14,7 @@
 
 #include "haversack/haversack.h"
 
+#include <cstddef>
 #include <memory>
 #include <type_traits>
 
@@ -938,8 +939,6 @@ TEST(Haversack, TagAlias) {
   using ChildA = Haversack<A>;
   using ChildB = Haversack<STaggedAlias<A, "a">>;
   Haversack<Deps<ChildA, ChildB>> deps(std::make_shared<A>(1));
-  // Haversack<Deps<ChildA, ChildB>> deps2(
-  //     MakeTagged<"a">(std::make_shared<A>(1)));
   ChildB child = deps;
   EXPECT_EQ(child.Get<"a">().i, 1);
   EXPECT_EQ(child.Get<A>().i, 1);
@@ -957,6 +956,44 @@ TEST(Haversack, TagAlias) {
 //   EXPECT_EQ(child.Get<"a">().i, 1);
 //   EXPECT_EQ(child.Get<A>().i, 1);
 // }
+
+TEST(Haversack, MakeTaggedForNullable) {
+  Haversack<Tagged<Nullable<A>, TagA>> deps(
+      MakeTagged<TagA>(std::make_shared<A>(17)));
+  EXPECT_EQ(deps.Get<TagA>()->i, 17);
+}
+
+TEST(Haversack, MakeTaggedForNullableFromNullptr) {
+  Haversack<Tagged<Nullable<A>, TagA>> deps(MakeTagged<TagA>(nullptr));
+  EXPECT_EQ(deps.Get<TagA>(), nullptr);
+}
+
+TEST(Haversack, MakeTaggedForKnownThreadSafeNullableFromNullptr) {
+  Haversack<Tagged<Nullable<KnownThreadSafe<A>>, TagA>> deps(
+      MakeTagged<TagA>(nullptr));
+  EXPECT_EQ(deps.Get<TagA>(), nullptr);
+}
+
+TEST(Haversack, MakeTaggedForKnownThreadSafe) {
+  Haversack<Tagged<KnownThreadSafe<A>, TagA>> deps(
+      MakeTagged<TagA>(std::make_shared<A>(17)));
+  EXPECT_EQ(deps.Get<TagA>().i, 17);
+}
+
+TEST(Haversack, ImplicitConvertTagged) {
+  auto nullable_tagged = []() -> Tagged<Nullable<A>, TagA> {
+    return MakeTagged<TagA>(std::make_shared<A>(17));
+  }();
+  EXPECT_EQ(nullable_tagged.tagged->i, 17);
+}
+
+TEST(Haversack, CannotConstructTagFromNullptr) {
+  EXPECT_FALSE((std::is_constructible_v<Tagged<A, TagA>, nullptr_t>));
+}
+
+TEST(Haversack, CanConstructNullableTagFromNullptr) {
+  EXPECT_TRUE((std::is_constructible_v<Tagged<Nullable<A>, TagA>, nullptr_t>));
+}
 
 TEST(Haversack, CannotMixTagAndAlias) {
   EXPECT_NON_COMPILE(

@@ -120,6 +120,8 @@ class SecurityBadge {
 };
 
 template <typename T>
+concept Nullptr = std::same_as<T, nullptr_t>;
+template <typename T>
 concept NullablePointer =
     htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::unique_ptr>> ||
     htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
@@ -157,8 +159,7 @@ concept CoercedCtorArgC =
     htls::meta::Concept<T, htls::meta::IsTemplateInstance<std::shared_ptr>> ||
     htls::meta::Concept<T, htls::meta::IsTemplateInstance<Tagged>>;
 template <typename T>
-concept CoercedExplicitInsertArg =
-    CoercedCtorArgC<T> || std::same_as<T, std::nullptr_t>;
+concept CoercedExplicitInsertArg = CoercedCtorArgC<T> || Nullptr<T>;
 
 template <typename T>
 concept UnwrappedType =
@@ -324,7 +325,7 @@ template <typename WrappedType>
 consteval bool IsKnownThreadSafe(htls::meta::Type<WrappedType> t) {
   return kUnwrapTypeWrappers.GetMetadata(t).known_thread_safe;
 }
-template <CoercedCtorArgC CtorArg>
+template <CoercedExplicitInsertArg CtorArg>
 consteval auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
   if constexpr (t == htls::meta::type_c<std::nullptr_t>) {
     return htls::meta::type_c<void>;
@@ -334,10 +335,29 @@ consteval auto GetDisplayableCtorArgType(htls::meta::Type<CtorArg> t) {
     return htls::meta::type_c<typename CtorArg::element_type>;
   }
 }
-template <CoercedCtorArgC CtorArg>
-consteval auto DeduceWrappedTypeFromCtorArg(htls::meta::Type<CtorArg> t) {
+// Deduce a type from a `CoercedCtorArgC`. We don't want to deduce
+// KnownThreadSafe here because we don't want to default to inserting
+// KnownThreadSafe types.
+template <CoercedCtorArgC InsertArg>
+consteval auto DeduceWrappedTypeFromInsertArg(htls::meta::Type<InsertArg> t) {
   constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
   return remove_const(GetDisplayableCtorArgType(t));
+}
+// Deduce a potentially KnownThreadSafe type from a `CoercedCtorArgC`. We want
+// to deduce KnownThreadSafe here because we can rely on tag matching to get the
+// right final type.
+template <CoercedExplicitInsertArg MakeTaggedArg>
+consteval auto DeduceWrappedTypeFromMakeTaggedArg(
+    htls::meta::Type<MakeTaggedArg> t) {
+  constexpr htls::meta::MetaTypeFunction<std::remove_const> remove_const;
+  constexpr htls::meta::MetaValueFunction<std::is_const> is_const;
+  constexpr auto display = GetDisplayableCtorArgType(t);
+  if constexpr (is_const(display)) {
+    return remove_const(GetDisplayableCtorArgType(t));
+  } else {
+    return htls::meta::type_c<
+        KnownThreadSafe<typename decltype(display)::type>>;
+  }
 }
 
 // Forward decl for friends.
@@ -349,6 +369,13 @@ struct HaversackTestUtil;
 //
 // value is nullable to allow for MakeFakeHaversack in testing. Nulability
 // invariants are enforced during Haversack construction in production.
+//
+// Note: Holder's implementation is very similar to Tagged. The main differences
+// are:
+//   - Tagged can hold a `void` for an undeduced type, but Holder always holds a
+//   non-void type.
+//   - Holder enforces non-nullness for non-Nullable types, but Tagged does not
+//   to enforce non-nullness allow converting from a non-Nullable to a Nullable.
 template <typename WrappedType>
 class Holder {
  public:
@@ -356,7 +383,9 @@ class Holder {
   using ProxyType = SharedProxy<typename decltype(kUnwrapTypeWrappers(
       htls::meta::type_c<WrappedType>))::type>;
 
-  explicit Holder(ProxyType v) : value_(std::move(v)) {
+  template <typename T>
+    requires(std::is_convertible_v<T, ProxyType> && !internal::Nullptr<T>)
+  explicit Holder(T t) : value_(std::move(t)) {
     if constexpr (!internal::IsNullable(htls::meta::type_c<type>)) {
       if (!value_) {
         HAVERSACK_DIE("Pointers should never be null in haversack, but a "
@@ -365,9 +394,12 @@ class Holder {
       }
     }
   }
-  explicit Holder(WrappedType wt)
+  explicit Holder(WrappedType ot)
     requires(IsTagged(htls::meta::type_c<WrappedType>))
-      : Holder(std::move(wt).tagged) {}
+      : Holder(std::move(ot).tagged) {}
+  explicit Holder(Nullptr auto)
+    requires(IsNullable(htls::meta::type_c<WrappedType>))
+      : value_(nullptr) {}
   // Only used in tests.
   explicit Holder(SecurityBadge<HaversackTestUtil>) : value_(nullptr) {}
 
@@ -520,52 +552,28 @@ template <htls::meta::Concept<htls::meta::IsTemplateInstance<CompatibleArgs>>
 constexpr htls::meta::BasicTuple kGetMatchChecks =
     GetMatchChecksImpl<Compatibility>();
 
-// ConvertOne<TargetWrappedType> has an operator() to convert any valid CtorArg
-// to a Holder<TargetWrappedType>.
+// ConvertOne<TargetWrappedType> has an operator() to convert any valid
+// CoercedExplicitInsertArg to a Holder<TargetWrappedType>.
 template <typename TargetWrappedType,
           UnwrappedType TargetUnwrappedType =
               typename decltype(kUnwrapTypeWrappers(
                   htls::meta::type_c<TargetWrappedType>))::type>
 struct ConvertOne {
-  // Returns the appropriate Holder if a conversion is possible, otherwise void.
-  template <CoercedCtorArgC U>
-  static auto Impl(U u) {
-    if constexpr (htls::meta::IsTemplateInstance<std::shared_ptr>(
-                      htls::meta::type_c<U>) &&
-                  std::is_convertible_v<U, SharedProxy<TargetUnwrappedType>>) {
-      return Holder<TargetWrappedType>{std::move(u)};
-    } else if constexpr (IsTagged(htls::meta::type_c<TargetWrappedType>)) {
-      if constexpr (GetTag(htls::meta::type_c<U>) ==
-                    GetTag(htls::meta::type_c<TargetWrappedType>)) {
-        return Holder<TargetWrappedType>{std::move(u.tagged)};
-      }
-    }
-  }
-  template <CoercedCtorArgC U>
-    requires(!std::is_same_v<decltype(Impl(std::declval<U &&>())), void>)
+  template <CoercedExplicitInsertArg U>
+    requires(std::is_constructible_v<Holder<TargetWrappedType>, U &&>)
   Holder<TargetWrappedType> operator()(U u) const {
-    return Impl(std::move(u));
+    return Holder<TargetWrappedType>{std::move(u)};
   }
 };
 
 // A Converter<TargetWrappedTypes...> has operator() to convert any valid
-// CtorArg to whichever Holder<TargetWrappedTypes> it is compatible with. If the
-// argument is not a one-to-one match with one of TargetWrappedTypes, the
-// operator() invocation is a template error.
+// CoercedExplicitInsertArg to whichever Holder<TargetWrappedTypes> it is
+// compatible with. If the argument is not a one-to-one match with one of
+// TargetWrappedTypes, the operator() invocation is a template error.
 template <typename... TargetWrappedTypes>
 struct Converter : ConvertOne<TargetWrappedTypes>... {
   using ConvertOne<TargetWrappedTypes>::operator()...;
 };
-
-template <typename TargetWrappedType, CoercedExplicitInsertArg T>
-auto ConvertInsertArg(T t) {
-  if constexpr (IsNullable(htls::meta::type_c<TargetWrappedType>) &&
-                std::is_same_v<T, nullptr_t>) {
-    return Holder<TargetWrappedType>{nullptr};
-  } else {
-    return ConvertOne<TargetWrappedType>()(std::move(t));
-  }
-}
 
 // Determine if and how the types in SourceCtorArgs can be uniquely converted to
 // the types in TargetWrappedTypes.
