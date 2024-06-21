@@ -632,7 +632,7 @@ struct Tagged {
   explicit Tagged(nullptr_t)
     requires(internal::IsNullable(htls::meta::type_c<WrappedType>) ||
              std::same_as<MemberType, nullptr_t>)
-      : Tagged(MemberType()) {}
+      : tagged() {}
   template <typename OtherTagged>
   Tagged(OtherTagged ot)
     requires(internal::IsTagged(htls::meta::type_c<OtherTagged>) &&
