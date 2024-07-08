@@ -329,7 +329,7 @@ class Haversack {
         return Traits()
             .CtorCompatibility(htls::meta::MakeTypeSet(),
                                htls::meta::BasicTuple<>())
-            .template FindMatch(
+            .FindMatch(
                 htls::meta::type_c<internal::CoercedCtorArg<Arg>>);
       } else {
         return htls::meta::type_c<ExplicitWrappedType>;
