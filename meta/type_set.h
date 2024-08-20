@@ -15,8 +15,10 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_SET_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_TYPE_SET_H_
 
+#include <algorithm>
 #include <array>
-#include <string>
+#include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
@@ -26,6 +28,9 @@
 namespace htls::meta {
 namespace internal_type_set {
 
+template <typename... Ts>
+using TypeTuple = BasicTuple<Type<Ts>...>;
+
 struct TypeSetCtorSentinel {
   // Disable ALL aggregate init.
   constexpr explicit TypeSetCtorSentinel() {}
@@ -33,12 +38,16 @@ struct TypeSetCtorSentinel {
 
 }  // namespace internal_type_set
 
-// Instances of TypeSet are assumed to contain a unique set of types.
+// Instances of TypeSet are contain a unique set of types. This is enforced by
+// the constructor/MakeTypeSet so a TypeSet "type" is not necessarily valid.
 //
-// This type should only be instantiated by MakeTypeSet or
-// MakePrevalidiatedTypeSet.
+// This type should only be instantiated by MakeTypeSet because Ts are expected
+// to be ordered (by hash) and unique.
 template <typename... Ts>
 struct TypeSet {
+  constexpr TypeSet()
+    requires(sizeof...(Ts) == 0)
+  = default;
   constexpr explicit TypeSet(internal_type_set::TypeSetCtorSentinel,
                              htls::meta::BasicTuple<Type<Ts>...>) {}
 
@@ -71,34 +80,23 @@ constexpr uint64_t kTypeHash = FnvHash64<Ts...>();
 // The type order is derived from the hash of the type, therefore:
 //   1. All equivalent types will have an equivalent hash and therefore be
 //      sorted near each other.
-//   2. Unequivalent types with hash collisions will be sorted near each other.
+//   2. Inequivalent types with hash collisions will be sorted near each other.
 //
 // The hash is not enough to guarantee equivalence of types so this TypeInfo
 // alone cannot be used to establish type equivalence. TypeInfo can be used to
-// establish type unequivalence, though.
+// establish type inequivalence, though.
 struct TypeInfo {
   uint64_t hash = {};
   std::size_t index = {};
 
-  // std::swap is not constexpr until C++20...
-  constexpr void swap(TypeInfo& other) {
-    TypeInfo self = *this;
-    *this = other;
-    other = self;
-  }
-
   // Arbitrary strong-ordering that compares hashes first to allow constant time
   // comparison most of the time.
-  constexpr bool operator<(const TypeInfo& info) const {
-    return hash < info.hash;
+  constexpr auto operator<=>(const TypeInfo& info) const {
+    return hash <=> info.hash;
   }
 
   constexpr bool operator==(const TypeInfo& info) const {
     return hash == info.hash;
-  }
-
-  constexpr bool operator!=(const TypeInfo& info) const {
-    return !(*this == info);
   }
 
   // Make a TypeInfo from a type T.
@@ -115,36 +113,29 @@ struct TypeInfo {
     for (std::size_t i = 0; i < sizeof...(Ts); ++i) {
       infos[i].index = i;
     }
-    qsort(0, sizeof...(Ts) - 1, infos);
+    std::sort(infos.begin(), infos.end());
     return infos;
   }
-};
 
-// std::sort isn't constexpr until C++20...
-template <std::size_t N>
-constexpr void qsort(std::size_t start, std::size_t end,
-                     std::array<TypeInfo, N>& infos) {
-  if (N == 0) return;
-  while (start < end) {
-    // 3-median pivot
-    std::size_t mid = ((end - start) / 2) + start;
-    if (infos[mid] < infos[start]) infos[start].swap(infos[mid]);
-    if (infos[end] < infos[start]) infos[start].swap(infos[end]);
-    if (infos[mid] < infos[end]) infos[end].swap(infos[mid]);
-
-    const auto& pivot = infos[end];
-    std::size_t i = start;
-    for (std::size_t j = start; j < end; ++j) {
-      if (infos[j] < pivot) {
-        infos[i++].swap(infos[j]);
-      }
+  // Same as `MakeSortedArray` except for the case when two pre-sorted inputs
+  // are provided so a merge algorithm can be used to sort them together.
+  template <typename... Ts, typename... Us>
+  constexpr static std::array<TypeInfo, sizeof...(Ts) + sizeof...(Us)>
+  MakeMergedArray(TypeTuple<Ts...>, TypeTuple<Us...>) {
+    std::array<TypeInfo, sizeof...(Ts)> t_infos = {TypeInfo::Make<Ts>()...};
+    std::array<TypeInfo, sizeof...(Us)> u_infos = {TypeInfo::Make<Us>()...};
+    for (std::size_t i = 0; i < sizeof...(Ts); ++i) {
+      t_infos[i].index = i;
     }
-    infos[i].swap(infos[end]);
-    qsort(i + 1, end, infos);
-    if (i <= start) break;
-    end = i - 1;
+    for (std::size_t i = 0; i < sizeof...(Us); ++i) {
+      u_infos[i].index = sizeof...(Ts) + i;
+    }
+    std::array<TypeInfo, sizeof...(Ts) + sizeof...(Us)> output;
+    std::merge(t_infos.begin(), t_infos.end(), u_infos.begin(), u_infos.end(),
+               output.begin());
+    return output;
   }
-}
+};
 
 // Create a reverse mapping of TypeInfos. reverse[n] is the index of the
 // TypeInfo in infos with info.index == n. This allows looking up TypeInfo in
@@ -161,20 +152,57 @@ constexpr std::array<std::size_t, N> MakeReverse(
 
 template <typename... Ts>
 constexpr std::array kSortedTypeInfos = TypeInfo::MakeSortedArray<Ts...>();
-template <typename... Ts>
-constexpr std::array kReverseIndexes = MakeReverse(kSortedTypeInfos<Ts...>);
+template <typename T, typename U>
+constexpr std::array kMergedTypeInfos = TypeInfo::MakeMergedArray(T(), U());
 
-template <typename... Ts>
-struct SortedTypeInfoCollection {
+// If Us... is non-empty, Ts and Us are assumed to be sorted; otherwise Ts will
+// be sorted.
+template <typename... Ts, typename... Us>
+constexpr auto GetSortedTypeInfos(TypeTuple<Ts...>, TypeTuple<Us...>) {
+  if constexpr (sizeof...(Us) == 0) {
+    return kSortedTypeInfos<Ts...>;
+  } else {
+    return kMergedTypeInfos<TypeTuple<Ts...>, TypeTuple<Us...>>;
+  }
+}
+
+enum class UniqueMode { kSoFar, kThroughout, kNotThroughout };
+
+template <typename T, typename U>
+constexpr std::array kReverseIndexes =
+    MakeReverse(GetSortedTypeInfos(T(), U()));
+
+template <typename, typename = BasicTuple<>>
+struct SortedTypeInfoCollection;
+template <typename... Ts, typename... Us>
+struct SortedTypeInfoCollection<TypeTuple<Ts...>, TypeTuple<Us...>> {
+  static constexpr TypeTuple<Ts..., Us...> Types() { return {}; }
+  static constexpr auto GetInfos() {
+    return GetSortedTypeInfos(TypeTuple<Ts...>(), TypeTuple<Us...>());
+  }
+
+  template <UniqueMode mode, std::ptrdiff_t index>
+  static constexpr bool IndexIsUnique() {
+    if constexpr (mode == UniqueMode::kSoFar) {
+      return IndexIsUniqueSoFar<index>();
+    } else if constexpr (mode == UniqueMode::kThroughout) {
+      return IndexIsUniqueThroughout<index>();
+    } else if constexpr (mode == UniqueMode::kNotThroughout) {
+      return !IndexIsUniqueThroughout<index>();
+    } else {
+      static_assert(mode == UniqueMode::kSoFar, "Should be unreachable.");
+    }
+  }
+
   // Returns true if Ts[index] is unique for all Ts with smaller indexes.
   template <std::ptrdiff_t index>
-  constexpr bool IndexIsUniqueSoFar() const {
+  static constexpr bool IndexIsUniqueSoFar() {
     return IndexIsUniqueImpl<index, -1, -1>();
   }
 
   // Returns true if Ts[index] is unique for all Ts with any index.
   template <std::ptrdiff_t index>
-  constexpr bool IndexIsUniqueThroughout() const {
+  static constexpr bool IndexIsUniqueThroughout() {
     return IndexIsUniqueImpl<index, -1, -1>() &&
            IndexIsUniqueImpl<index, 1, 1>();
   }
@@ -184,20 +212,19 @@ struct SortedTypeInfoCollection {
   // there is a TypeInfo match but not an exact type match.
   template <std::ptrdiff_t index, std::ptrdiff_t compare_offset,
             std::ptrdiff_t offset_delta>
-  constexpr bool IndexIsUniqueImpl() const {
-    constexpr htls::meta::BasicTuple<Type<Ts>...> tuple;
-    constexpr std::size_t rev = kReverseIndexes<Ts...>[index];
+  static constexpr bool IndexIsUniqueImpl() {
+    constexpr htls::meta::BasicTuple<Type<Ts>..., Type<Us>...> tuple;
+    constexpr std::size_t rev =
+        kReverseIndexes<TypeTuple<Ts...>, TypeTuple<Us...>>[index];
     constexpr std::size_t compare_index = rev + compare_offset;
     if constexpr (compare_index < 0 || compare_index >= size(tuple)) {
       // There is nothing left to check against so this index must be unique.
       return true;
     } else {
-      if constexpr (kSortedTypeInfos<Ts...>[rev] ==
-                    kSortedTypeInfos<Ts...>[compare_index]) {
+      if constexpr (GetInfos()[rev] == GetInfos()[compare_index]) {
         // This index has a matching info.
         if constexpr (htls::meta::get<index>(tuple) ==
-                      htls::meta::get<kSortedTypeInfos<Ts...>[compare_index].index>(
-                          tuple)) {
+                      htls::meta::get<GetInfos()[compare_index].index>(tuple)) {
           // The type and the info match so this index is not unique.
           return false;
         } else {
@@ -215,85 +242,67 @@ struct SortedTypeInfoCollection {
   }
 };
 
-template <typename... Ts, std::size_t... indexes>
-constexpr auto MakeTypeSetImpl(std::index_sequence<indexes...>,
-                               Type<Ts>... ts) {
-  constexpr SortedTypeInfoCollection<Ts...> type_infos;
-  auto transform = [&](auto t, auto index_constant) {
-    // Note: function arguments are not constexpr so we encode the index in the
-    // type and extract it into a constexpr variable here.
-    constexpr std::size_t index = decltype(index_constant)::value;
-    // Predicate: Include t if it is exactly the first time it appears in infos,
-    // otherwise exclude it.
-    if constexpr (type_infos.template IndexIsUniqueSoFar<index>()) {
-      return htls::meta::MakeBasicTuple(t);
-    } else {
-      return htls::meta::MakeBasicTuple();
+// Implements different set operations; e.g. union, intersection.
+//
+// - SortedInfos is the `SortedTypeInfoCollection`
+// - mode is the comparison mode used when determining if a type is unique
+// - candidate_count is the count of types that are candidates to be returned;
+//   e.g. for the difference of Ts and Us, only Ts are candidates.
+// - ShortCircuit is a TypeSet if short-circuiting is enabled or nullptr
+//   otherwise. Some operators can short-circuit if the output size (`count`)
+//   matches the candidate_count
+// - indexes are the indexes of all the types.
+template <typename SortedInfos, UniqueMode mode, std::size_t candidate_count,
+          typename ShortCircuit, std::size_t... indexes>
+constexpr auto TypeSetOperatorImpl(std::index_sequence<indexes...>,
+                                   ShortCircuit sc) {
+  constexpr SortedInfos type_infos;
+  constexpr std::array<std::size_t, sizeof...(indexes)> mapped_indexes = [] {
+    std::array<std::size_t, sizeof...(indexes)> arr;
+    for (std::size_t index = 0; index < sizeof...(indexes); ++index) {
+      arr[index] = SortedInfos::GetInfos()[index].index;
     }
-  };
-  // Filter Ts using the above predicate.
-  return TypeSet(
-      internal_type_set::TypeSetCtorSentinel(),
-      (transform(type_c<Ts>, std::integral_constant<std::size_t, indexes>()) +
-       ... + htls::meta::MakeBasicTuple()));
-}
+    return arr;
+  }();
+  constexpr std::array<bool, sizeof...(indexes)> is_unique = {
+      mapped_indexes[indexes] < candidate_count &&
+      type_infos.template IndexIsUnique<mode, mapped_indexes[indexes]>()...};
+  constexpr std::size_t count = [&is_unique] {
+    std::size_t sum = 0;
+    for (bool b : is_unique) {
+      sum += b ? 1 : 0;
+    }
+    return sum;
+  }();
+  if constexpr (count == 0) {
+    return TypeSet();
+  } else if constexpr (count == candidate_count &&
+                       !std::is_same_v<ShortCircuit, nullptr_t>) {
+    return sc;
+  } else {
+    constexpr std::array<std::size_t, count> unique_indexes = [&] {
+      std::array<std::size_t, count> unique_indexes{};
+      std::size_t c = 0;
 
-template <typename... Ts, typename... Us, std::size_t... indexes>
-constexpr auto DifferenceImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
-                              Type<Ts>... ts) {
-  constexpr SortedTypeInfoCollection<Ts..., Us...> type_infos;
-  auto transform = [&](auto t, auto index_constant) {
-    constexpr std::size_t index = decltype(index_constant)::value;
-    // Predicate: Include t if it only appears once in infos otherwise exclude
-    // it.
-    if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
-      return htls::meta::MakeBasicTuple(t);
-    } else {
-      return htls::meta::MakeBasicTuple();
-    }
-  };
-  // Filter Ts using the above predicate.
-  // Note: We include Us in the infos array but do not include them in this
-  // filtering process. In this way we include each Ts if it is unique in both
-  // Ts and Us.
-  return TypeSet(
-      internal_type_set::TypeSetCtorSentinel(),
-      (transform(ts, std::integral_constant<std::size_t, indexes>()) + ... +
-       htls::meta::MakeBasicTuple()));
-}
-
-template <typename... Ts, typename... Us, std::size_t... indexes>
-constexpr auto IntersectionImpl(std::index_sequence<indexes...>, TypeSet<Us...>,
-                                Type<Ts>... ts) {
-  constexpr SortedTypeInfoCollection<Ts..., Us...> type_infos;
-  auto transform = [&](auto t, auto index_constant) {
-    constexpr std::size_t index = decltype(index_constant)::value;
-    // Predicate: Include t if t is NOT unique in infos, otherwise exclude it.
-    if constexpr (type_infos.template IndexIsUniqueThroughout<index>()) {
-      return htls::meta::MakeBasicTuple();
-    } else {
-      return htls::meta::MakeBasicTuple(t);
-    }
-  };
-  // Filter Ts using the above predicate.
-  // Note: We include Us in the infos array but do not include them in this
-  // filtering process. Since Ts and Us are both TypeSets, any duplicates in
-  // Ts+Us means that the duplicate is in both groups.
-  return TypeSet(
-      internal_type_set::TypeSetCtorSentinel(),
-      (transform(ts, std::integral_constant<std::size_t, indexes>()) + ... +
-       htls::meta::MakeBasicTuple()));
+      for (std::size_t index = 0; index < sizeof...(indexes); ++index) {
+        if (is_unique[index]) {
+          unique_indexes[c] = index;
+          ++c;
+        }
+      }
+      return unique_indexes;
+    }();
+    return [&]<std::size_t... output_indexes>(
+               std::index_sequence<output_indexes...>) {
+      return TypeSet(
+          internal_type_set::TypeSetCtorSentinel(),
+          MakeBasicTuple(get<mapped_indexes[unique_indexes[output_indexes]]>(
+              type_infos.Types())...));
+    }(std::make_index_sequence<count>());
+  }
 }
 
 }  // namespace internal_type_set
-
-// Create a TypeSet instance of ts. Only use this if ts has already had its
-// duplicates removed.
-template <typename... Ts>
-constexpr auto MakePrevalidatedTypeSet(Ts... ts) {
-  return TypeSet(internal_type_set::TypeSetCtorSentinel(),
-                 htls::meta::MakeBasicTuple(ts...));
-}
 
 // True if t is in p.
 template <typename T, typename... Us>
@@ -306,20 +315,17 @@ constexpr auto Contains(Type<T> t, TypeSet<Us...> tuple) {
 // sum must be a TypeSet and t must be a Type.
 template <typename... Ts, typename T>
 constexpr auto AppendIfUnique(TypeSet<Ts...> sum, Type<T> t) {
-  if constexpr (Contains(t, sum)) {
-    return sum;
-  } else {
-    return htls::meta::Apply(
-        [](auto... ts) { return MakePrevalidatedTypeSet(ts...); },
-        std::move(sum.Tuple()) + htls::meta::MakeBasicTuple(t));
-  }
+  return sum | MakeTypeSet(t);
 }
 
 // Create a TypeSet instance by removing all duplicates from ts.
 template <typename... Ts>
 constexpr auto MakeTypeSet(Type<Ts>... ts) {
-  return internal_type_set::MakeTypeSetImpl(
-      std::make_index_sequence<sizeof...(Ts)>(), ts...);
+  return internal_type_set::TypeSetOperatorImpl<
+      internal_type_set::SortedTypeInfoCollection<
+          internal_type_set::TypeTuple<Ts...>>,
+      internal_type_set::UniqueMode::kSoFar, sizeof...(Ts)>(
+      std::make_index_sequence<sizeof...(Ts)>(), nullptr);
 }
 
 // True if the type of each ts is unique.
@@ -331,32 +337,68 @@ constexpr auto AllUnique(Type<Ts>... ts) {
 // Returns the TypeSet of types that are in t AND NOT in u.
 template <typename... Ts, typename... Us>
 constexpr auto operator-(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  return internal_type_set::DifferenceImpl(
-      std::make_index_sequence<sizeof...(Ts)>(), u, type_c<Ts>...);
+  if constexpr (sizeof...(Us) == 0) {
+    return t;
+  } else if constexpr (sizeof...(Ts) == 0) {
+    return TypeSet();
+  } else {
+    return internal_type_set::TypeSetOperatorImpl<
+        internal_type_set::SortedTypeInfoCollection<
+            internal_type_set::TypeTuple<Ts...>,
+            internal_type_set::TypeTuple<Us...>>,
+        internal_type_set::UniqueMode::kThroughout, sizeof...(Ts)>(
+        std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), t);
+  }
 }
 
 // Returns the TypeSet of types that are in t OR u.
 template <typename... Ts, typename... Us>
 constexpr auto operator|(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  return MakeTypeSet(type_c<Ts>..., type_c<Us>...);
+  if constexpr (sizeof...(Ts) == 0) {
+    return u;
+  } else if constexpr (sizeof...(Us) == 0) {
+    return t;
+  } else {
+    return internal_type_set::TypeSetOperatorImpl<
+        internal_type_set::SortedTypeInfoCollection<
+            internal_type_set::TypeTuple<Ts...>,
+            internal_type_set::TypeTuple<Us...>>,
+        internal_type_set::UniqueMode::kSoFar, sizeof...(Ts) + sizeof...(Us)>(
+        std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), nullptr);
+  }
 }
 
 // Returns the TypeSet of types that are in t AND u.
 template <typename... Ts, typename... Us>
 constexpr auto operator&(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  return internal_type_set::IntersectionImpl(
-      std::make_index_sequence<sizeof...(Ts)>(), u, type_c<Ts>...);
+  if constexpr (sizeof...(Ts) == 0 || sizeof...(Us) == 0) {
+    return TypeSet();
+  } else {
+    return internal_type_set::TypeSetOperatorImpl<
+        internal_type_set::SortedTypeInfoCollection<
+            internal_type_set::TypeTuple<Ts...>,
+            internal_type_set::TypeTuple<Us...>>,
+        internal_type_set::UniqueMode::kNotThroughout, sizeof...(Ts)>(
+        std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), t);
+  }
 }
 
 // Returns a TypeSet containing the types that are in t XOR u.
 template <typename... Ts, typename... Us>
 constexpr auto operator^(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  // DifferenceImpl only includes types that are in the trailing argument pack
-  // and are unique across the (empty here) typeset and the argument pack. In
-  // this case, the types that are unique in Ts+Us is Ts XOR Us.
-  return internal_type_set::DifferenceImpl(
-      std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), MakeTypeSet(),
-      type_c<Ts>..., type_c<Us>...);
+  if constexpr (sizeof...(Us) == 0) {
+    return t;
+  } else if constexpr (sizeof...(Ts) == 0) {
+    return TypeSet();
+  } else {
+    return internal_type_set::TypeSetOperatorImpl<
+        internal_type_set::SortedTypeInfoCollection<
+            internal_type_set::TypeTuple<Ts...>,
+            internal_type_set::TypeTuple<Us...>>,
+        internal_type_set::UniqueMode::kThroughout,
+        sizeof...(Ts) + sizeof...(Us)>(
+        std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), nullptr);
+  }
 }
 
 // t >= u iff the types in t are a superset of the types in u. `<=` is the
@@ -374,7 +416,11 @@ constexpr auto operator<=(TypeSet<Ts...> t, TypeSet<Us...> u) {
 // True if t and u contains the same types ignoring ordering.
 template <typename... Ts, typename... Us>
 constexpr auto operator==(TypeSet<Ts...> t, TypeSet<Us...> u) {
-  return sizeof...(Ts) == sizeof...(Us) && t >= u;
+  if constexpr (sizeof...(Ts) == sizeof...(Us)) {
+    return t >= u;
+  } else {
+    return false;
+  }
 }
 
 template <typename... Ts, typename... Us>

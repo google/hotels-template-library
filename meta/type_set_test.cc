@@ -14,13 +14,16 @@
 
 #include "meta/type_set.h"
 
-#include <gmock/gmock.h>
+#include <type_traits>
+
 #include <gtest/gtest.h>
+#include "meta/basic_tuple.h"
+#include "meta/type.h"
 
 namespace htls::meta {
 namespace {
 
-struct A {};
+struct A;
 struct B {};
 struct C {};
 struct D {};
@@ -35,14 +38,14 @@ struct ValueHolder {};
 static_assert(AllUnique(a, b, c), "Expected all unique types");
 static_assert(!AllUnique(c, b, c), "Expected not all unique types");
 
+static_assert(
+    std::is_same_v<decltype(MakeTypeSet(a, b)), decltype(MakeTypeSet(b, a))>,
+    "MakeTypeSet orders types in the TypeSet.");
 static_assert(MakeTypeSet(a, b, c).Tuple() ==
                   htls::meta::MakeBasicTuple(a, b, c),
               "Expected all unique types to remain after MakeTypeSet");
-static_assert(MakeTypeSet(c, b, c) == MakePrevalidatedTypeSet(c, b),
+static_assert(MakeTypeSet(c, b, c) == MakeTypeSet(c, b),
               "Expected MakeTypeSet to remove duplicate types");
-static_assert(MakePrevalidatedTypeSet(b, c).Tuple() ==
-                  htls::meta::MakeBasicTuple(b, c),
-              "Expected MakePrevalidatedTypeSet to do nothing");
 
 static_assert(Contains(b, MakeTypeSet(a, b, c)),
               "Expected Contains to find a match");
@@ -61,15 +64,15 @@ static_assert(
     "ValueHolders with values of different types should be different.");
 
 static_assert((MakeTypeSet(a, b, c) | MakeTypeSet(a, d)) ==
-                  MakePrevalidatedTypeSet(a, b, c, d),
+                  MakeTypeSet(a, b, c, d),
               "Expected operator| to be union");
 
 static_assert((MakeTypeSet(a, b, c) & MakeTypeSet(a, c, d)).Tuple() ==
                   htls::meta::MakeBasicTuple(a, c),
               "Expected operator& to be intersection");
 
-static_assert((MakeTypeSet(a, b, c) ^ MakeTypeSet(a, d)).Tuple() ==
-                  htls::meta::MakeBasicTuple(b, c, d),
+static_assert((MakeTypeSet(a, b, c) ^ MakeTypeSet(a, d)) ==
+                  htls::meta::MakeTypeSet(b, c, d),
               "Expected operator^ to be XOR (symmetric difference)");
 
 static_assert(MakeTypeSet(a, b, c) >= MakeTypeSet(a, c),

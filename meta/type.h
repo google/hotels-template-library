@@ -191,10 +191,18 @@ constexpr IsTemplateInstanceFunctor<T> IsTemplateInstance;
 
 template <typename T, auto Func>
 concept Concept = Func(type_c<T>);
+
+namespace internal_type {
+
+template <typename>
+struct IsTypeTupleImpl : std::false_type {};
+template <typename... Ts>
+struct IsTypeTupleImpl<BasicTuple<Type<Ts>...>> : std::true_type {};
+
+}  // namespace internal_type
+
 template <typename T>
-concept TypeTuple = AllOf(
-    []<typename U>(const U&) { return IsTemplateInstance<Type>(type_c<U>); },
-    T());
+concept TypeTuple = internal_type::IsTypeTupleImpl<T>::value;
 
 }  // namespace htls::meta
 

@@ -581,8 +581,8 @@ TEST(HaversackCtor, VagueArgumentMatch) {
 TEST(HaversackCtor, VagueParameterMatch) {
   EXPECT_NON_COMPILE(
       "SourceMatches<hotels::haversack::\\(anonymous namespace\\)::SubA, "
-      "hotels::haversack::\\(anonymous namespace\\)::A, "
-      "hotels::haversack::\\(anonymous namespace\\)::SubA>.*"
+      "hotels::haversack::\\(anonymous namespace\\)::SubA, "
+      "hotels::haversack::\\(anonymous namespace\\)::A>.*"
       "The source type has more than one match",
       {
         SubA a(1);

@@ -15,6 +15,9 @@
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_BASIC_TUPLE_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_BASIC_TUPLE_H_
 
+#include <array>
+#include <cstddef>
+#include <type_traits>
 #include <utility>
 
 namespace htls::meta {
@@ -27,12 +30,7 @@ constexpr auto MakeBasicTuple(Ts&&...);
 namespace internal_basic_tuple {
 
 template <std::size_t Index, typename T>
-struct IndexedType {
-  static constexpr std::size_t index = Index;
-  using type = T;
-
-  T value{};
-};
+struct IndexedType {};
 
 template <typename...>
 struct BasicTupleImpl;
@@ -43,43 +41,17 @@ struct BasicTupleImpl<std::index_sequence<Indexes...>, Ts...>
 
   constexpr BasicTupleImpl() = default;
   template <typename... Args>
-  explicit constexpr BasicTupleImpl(Args&&... args)
-      : IndexedType<Indexes, Ts>{.value = std::forward<Args>(args)}... {}
+  explicit constexpr BasicTupleImpl(Args&&... args) {}
 };
 
 // Both template parameter orderings are specified to allow specifying only one.
 template <typename T, std::size_t Index>
-constexpr T& get(internal_basic_tuple::IndexedType<Index, T>& h) {
-  return h.value;
-}
-template <typename T, std::size_t Index>
-constexpr const T& get(const internal_basic_tuple::IndexedType<Index, T>& h) {
-  return h.value;
-}
-template <typename T, std::size_t Index>
-constexpr T&& get(internal_basic_tuple::IndexedType<Index, T>&& h) {
-  return std::move(h).value;
-}
-template <typename T, std::size_t Index>
-constexpr const T&& get(const internal_basic_tuple::IndexedType<Index, T>&& h) {
-  return std::move(h).value;
-}
-
-template <std::size_t Index, typename T>
-constexpr T& get(internal_basic_tuple::IndexedType<Index, T>& h) {
-  return h.value;
+constexpr T get(internal_basic_tuple::IndexedType<Index, T> h) {
+  return {};
 }
 template <std::size_t Index, typename T>
-constexpr const T& get(const internal_basic_tuple::IndexedType<Index, T>& h) {
-  return h.value;
-}
-template <std::size_t Index, typename T>
-constexpr T&& get(internal_basic_tuple::IndexedType<Index, T>&& h) {
-  return std::move(h).value;
-}
-template <std::size_t Index, typename T>
-constexpr const T&& get(const internal_basic_tuple::IndexedType<Index, T>&& h) {
-  return std::move(h).value;
+constexpr T get(internal_basic_tuple::IndexedType<Index, T> h) {
+  return {};
 }
 
 template <typename>
@@ -243,7 +215,41 @@ constexpr auto operator+(A&& a, B&& b) {
 // Concatenates N BasicTuples into one BasicTuple.
 template <typename... Ts>
 constexpr auto Concat(Ts&&... ts) {
-  return (BasicTuple<>() + ... + std::forward<Ts>(ts));
+  if constexpr (sizeof...(ts) <= 1) {
+    return (BasicTuple<>(), ..., ts);
+  } else {
+    BasicTuple<Ts...> bt;
+    // Extra size element to make iteration easier if the last tuple is empty.
+    constexpr std::array<std::size_t, sizeof...(ts) + 1> sizes = {
+        size(std::remove_cvref_t<Ts>())..., 1};
+    constexpr std::array<std::size_t, sizeof...(ts) + 1> cumulative = [&] {
+      std::array<std::size_t, sizeof...(ts) + 1> cum;
+      cum[0] = 0;
+      for (std::size_t i = 1; i < cum.size(); ++i) {
+        cum[i] = cum[i - 1] + sizes[i - 1];
+      }
+      return cum;
+    }();
+    constexpr std::size_t total =
+        cumulative[sizeof...(ts) - 1] + sizes[sizeof...(ts) - 1];
+    constexpr auto ts_indexes = [&] {
+      std::array<std::size_t, total> output;
+      std::size_t threshold = size(get<0>(bt));
+      std::size_t ts_index = 0;
+      for (std::size_t index = 0; index < total; ++index) {
+        while (index == threshold) {
+          ++ts_index;
+          threshold += sizes[ts_index];
+        }
+        output[index] = ts_index;
+      }
+      return output;
+    }();
+    return [&]<std::size_t... indexes>(std::index_sequence<indexes...>) {
+      return MakeBasicTuple(get<indexes - cumulative[ts_indexes[indexes]]>(
+          get<ts_indexes[indexes]>(bt))...);
+    }(std::make_index_sequence<total>());
+  }
 }
 
 // Applies a BasicTuple as arguments to a invocable.
@@ -268,16 +274,30 @@ constexpr auto Flatten(Ts&&... ts) {
 // members which do not pass the predicate.
 template <typename Pred, typename T,
           typename = std::enable_if_t<internal_basic_tuple::IsBasicTuple<T>>>
-constexpr auto Filter(Pred pred, T&& t) {
-  return Flatten(Transform(
-      [&](auto u) constexpr {
-        if constexpr (pred(u)) {
-          return MakeBasicTuple(std::move(u));
-        } else {
-          return BasicTuple<>();
-        }
-      },
-      std::forward<T>(t)));
+constexpr auto Filter(Pred pred, T t) {
+  constexpr std::array<bool, size(T())> passes_pred = Apply(
+      [&](auto... ts) { return std::array<bool, size(T())>{pred(ts)...}; }, t);
+  constexpr std::size_t count = [&passes_pred] {
+    std::size_t sum = 0;
+    for (bool b : passes_pred) {
+      sum += b ? 1 : 0;
+    }
+    return sum;
+  }();
+  constexpr std::array<std::size_t, count> passing_indexes = [&] {
+    std::array<std::size_t, count> passing_indexes{};
+    std::size_t c = 0;
+    for (std::size_t index = 0; index < size(t); ++index) {
+      if (passes_pred[index]) {
+        passing_indexes[c] = index;
+        ++c;
+      }
+    }
+    return passing_indexes;
+  }();
+  return [&]<std::size_t... indexes>(std::index_sequence<indexes...>) {
+    return MakeBasicTuple(get<passing_indexes[indexes]>(t)...);
+  }(std::make_index_sequence<count>());
 }
 
 // Performs an accumulate operation on a BasicTuple by passing the "sum" and
