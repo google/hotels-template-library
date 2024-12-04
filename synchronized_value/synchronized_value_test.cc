@@ -108,6 +108,23 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceSingleThread) {
   sv.Read([](const int& x) { EXPECT_EQ(x, 6); });
 }
 
+TYPED_TEST_P(SynchronizedValueTest, SetSingleThread) {
+  SynchronizedValue<int, TypeParam> sv(5);
+  sv.Set([]() { return 6; });
+  sv.Read([](const int& x) { EXPECT_EQ(x, 6); });
+  // Try all different lambda signatures
+  sv.Read([](const int& x) { return x + 1; });
+  sv.Read([](const int x) { return x + 1; });
+  sv.Read([](int x) { return x + 1; });
+
+  sv.Read([](const auto& x) { return x + 1; });
+  sv.Read([](const auto x) { return x + 1; });
+  sv.Read([](auto x) { return x + 1; });
+  // Try setting the value
+  sv.Set([]() { return 7; });
+  sv.Read([](const int& x) { EXPECT_EQ(x, 7); });
+}
+
 TYPED_TEST_P(SynchronizedValueTest, DefaultConstructible) {
   if constexpr (!std::is_same_v<TypeParam, SmallAtomicStrategy>) {
     constexpr auto hello = "Hello world";
@@ -263,12 +280,19 @@ TYPED_TEST_P(SynchronizedValueTest, MapUpdateCopyMulti) {
   }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest, NonMovableAndCopyable,
-                            ReadSingleThread, UpdateCopySingleThread,
-                            UpdateInplaceSingleThread, DefaultConstructible,
-                            GetViewSingleThread, MoveonlyUpdateInplace,
-                            UpdateInplaceMultithread, UpdateCopyMultithread,
-                            MapUpdateInplaceMulti, MapUpdateCopyMulti);
+REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest,      //
+                            NonMovableAndCopyable,      //
+                            ReadSingleThread,           //
+                            UpdateCopySingleThread,     //
+                            UpdateInplaceSingleThread,  //
+                            SetSingleThread,            //
+                            DefaultConstructible,       //
+                            GetViewSingleThread,        //
+                            MoveonlyUpdateInplace,      //
+                            UpdateInplaceMultithread,   //
+                            UpdateCopyMultithread,      //
+                            MapUpdateInplaceMulti,      //
+                            MapUpdateCopyMulti);
 
 using strategies = ::testing::Types<AbslMutexStrategy, LeftRightStrategy,
                                     SharedPtrRcuStrategy, SmallAtomicStrategy>;
