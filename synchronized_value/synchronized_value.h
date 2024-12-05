@@ -245,7 +245,7 @@ class SynchronizedValue {
             std::invoke_result_t<Updater,const ValueType&>>,
         "Invalid updater. Updater must take a const reference of ValueType and "
         "return a value that can be converted to ValueType");
-   if constexpr (kCopyUpdatable) {
+    if constexpr (kCopyUpdatable) {
       WriterLockT lock(mutex_, [&]() {
         return LockStrategy::EvaluateUpdateLockedPredicate(value_, predicate);
       });

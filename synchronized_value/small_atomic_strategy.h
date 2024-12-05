@@ -15,6 +15,7 @@
 #ifndef SMALL_ATOMIC_STRATEGY_H_
 #define SMALL_ATOMIC_STRATEGY_H_
 
+#include <atomic>
 #include <memory>
 #include <type_traits>
 #include <utility>

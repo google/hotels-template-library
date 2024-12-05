@@ -14,11 +14,16 @@
 
 #include "synchronized_value/synchronized_value.h"
 
+#include <algorithm>
 #include <functional>
+#include <initializer_list>
+#include <iterator>
 #include <memory>
+#include <string>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <absl/container/node_hash_map.h>
@@ -152,7 +157,7 @@ TYPED_TEST_P(SynchronizedValueTest, MoveonlyUpdateInplace) {
 
 template <bool Inplace, typename T>
 void update_int(T& sync_val) {
-  if constexpr (Inplace)
+  if constexpr (Inplace) {
     sync_val.UpdateInplace([](int& x) {
       int n = x;
       std::this_thread::yield();
@@ -164,11 +169,12 @@ void update_int(T& sync_val) {
       std::this_thread::yield();
       x = n + 1;
     });
-  else
+  } else {
     sync_val.UpdateCopy([](int x) {
       std::this_thread::yield();
       return x + 1;
     });
+  }
 }
 
 template <typename TypeParam, bool Inplace>
@@ -203,15 +209,16 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateCopyMultithread) {
 
 template <bool Inplace, typename T, typename Updater>
 void update_map(T& sv, int key, Updater&& updater) {
-  if constexpr (Inplace)
+  if constexpr (Inplace) {
     sv.UpdateInplace([key, &updater](auto& map) { updater(map[key]); });
-  else
+  } else {
     sv.UpdateCopy([key, &updater](const auto& map) {
       auto new_map(map);
       std::this_thread::yield();
       updater(new_map[key]);
       return new_map;
     });
+  }
 }
 
 template <typename TypeParam, bool Inplace>
