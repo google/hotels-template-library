@@ -235,6 +235,21 @@ class SynchronizedValue {
     }
   }
 
+  // Takes a parameterless lambda and then the object is replaced with the one
+  // returned from lambda.
+  //
+  // Only for strategies that support Set().
+  template <typename Updater>
+  void Set(Updater&& updater) {
+    static_assert(
+        std::is_constructible_v<typename LockStrategy::template ValueType<T>,
+                                std::invoke_result_t<Updater>>,
+        "Invalid updater. Updater must be an invocable that returns a value "
+        "that can be converted to ValueType");
+    WriterLockT lock(mutex_);
+    LockStrategy::Set(mutex_, value_, std::forward<Updater>(updater));
+  }
+
   // Condition version of UpdateCopy. Predicate is a function object that takes
   // `const T&`. This function calls updater after predicate returns true.
   template <typename Updater, typename Predicate>

@@ -48,7 +48,14 @@ class SharedPtrRcuStrategy {
     auto ptr = std::make_shared<T>(
         std::forward<CopyUpdate>(update)(**value.val_ptr.GetView()));
     value.val_ptr.UpdateCopy(
-        [ptr = std::move(ptr)](const auto&) mutable { return std::move(ptr); });
+        [&ptr](const auto&) mutable { return std::move(ptr); });
+  }
+
+  template <typename T, typename CopyUpdate>
+  static void Set(absl::Mutex&, ValueType<T>& value, CopyUpdate&& update) {
+    auto ptr = std::make_shared<T>(std::forward<CopyUpdate>(update)());
+    value.val_ptr.UpdateCopy(
+        [&ptr](const auto&) mutable { return std::move(ptr); });
   }
 
   template <typename T>

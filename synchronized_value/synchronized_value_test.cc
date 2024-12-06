@@ -23,10 +23,12 @@
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
 #include <absl/container/node_hash_map.h>
+#include <absl/functional/any_invocable.h>
 #include "synchronized_value/absl_mutex_strategy.h"
 #include "synchronized_value/left_right_strategy.h"
 #include "synchronized_value/shared_ptr_rcu_strategy.h"
@@ -55,6 +57,11 @@ template <typename Strat>
 class SynchronizedValueTest : public ::testing::Test {};
 
 TYPED_TEST_SUITE_P(SynchronizedValueTest);
+
+template <typename Strat>
+class SynchronizedValueSetTest : public ::testing::Test {};
+
+TYPED_TEST_SUITE_P(SynchronizedValueSetTest);
 
 TYPED_TEST_P(SynchronizedValueTest, NonMovableAndCopyable) {
   static_assert(
@@ -105,6 +112,32 @@ TYPED_TEST_P(SynchronizedValueTest, UpdateInplaceSingleThread) {
   sv.UpdateInplace([](auto& x) { x++; });
   // Try setting the value
   sv.UpdateInplace([](auto& x) { x = 6; });
+  sv.Read([](const int& x) { EXPECT_EQ(x, 6); });
+}
+
+TYPED_TEST_P(SynchronizedValueSetTest, SetSingleThread) {
+  SynchronizedValue<int, TypeParam> sv(5);
+  sv.Set([]() { return 6; });
+  sv.Read([](const int& x) { EXPECT_EQ(x, 6); });
+  // Try all different lambda signatures
+  sv.Read([](const int& x) { return x + 1; });
+  sv.Read([](const int x) { return x + 1; });
+  sv.Read([](int x) { return x + 1; });
+
+  sv.Read([](const auto& x) { return x + 1; });
+  sv.Read([](const auto x) { return x + 1; });
+  sv.Read([](auto x) { return x + 1; });
+  // Try setting the value
+  sv.Set([]() { return 7; });
+  sv.Read([](const int& x) { EXPECT_EQ(x, 7); });
+}
+
+TYPED_TEST_P(SynchronizedValueSetTest, SetWithRValueInvocable) {
+  SynchronizedValue<int, TypeParam> sv(5);
+  sv.Read([](const int& x) { EXPECT_EQ(x, 5); });
+
+  absl::AnyInvocable<int() &&> invocable = []() { return 6; };
+  sv.Set(std::move(invocable));
   sv.Read([](const int& x) { EXPECT_EQ(x, 6); });
 }
 
@@ -263,16 +296,30 @@ TYPED_TEST_P(SynchronizedValueTest, MapUpdateCopyMulti) {
   }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest, NonMovableAndCopyable,
-                            ReadSingleThread, UpdateCopySingleThread,
-                            UpdateInplaceSingleThread, DefaultConstructible,
-                            GetViewSingleThread, MoveonlyUpdateInplace,
-                            UpdateInplaceMultithread, UpdateCopyMultithread,
-                            MapUpdateInplaceMulti, MapUpdateCopyMulti);
+REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueTest,      //
+                            NonMovableAndCopyable,      //
+                            ReadSingleThread,           //
+                            UpdateCopySingleThread,     //
+                            UpdateInplaceSingleThread,  //
+                            DefaultConstructible,       //
+                            GetViewSingleThread,        //
+                            MoveonlyUpdateInplace,      //
+                            UpdateInplaceMultithread,   //
+                            UpdateCopyMultithread,      //
+                            MapUpdateInplaceMulti,      //
+                            MapUpdateCopyMulti);
 
 using strategies = ::testing::Types<AbslMutexStrategy, LeftRightStrategy,
                                     SharedPtrRcuStrategy, SmallAtomicStrategy>;
 INSTANTIATE_TYPED_TEST_SUITE_P(SVTests, SynchronizedValueTest, strategies);
+
+REGISTER_TYPED_TEST_SUITE_P(SynchronizedValueSetTest,  //
+                            SetSingleThread,           //
+                            SetWithRValueInvocable);
+
+using strategies_that_support_set = ::testing::Types<SharedPtrRcuStrategy>;
+INSTANTIATE_TYPED_TEST_SUITE_P(SVSetTests, SynchronizedValueSetTest,
+                               strategies_that_support_set);
 
 }  // namespace
 }  // namespace htls
