@@ -76,18 +76,6 @@ struct HaversackTestUtil {
   }
 
  public:
-#if HAVERSACK_GET_TESTER_MODE > 0
-  template <typename HaversackT, typename... SubHaversackTs, typename... Args>
-  static HaversackT MakeFakeHaversack(Args&&... args) {
-    // If HAVERSACK_GET_TESTER_MODE is enabled, create a haversack that is all
-    // null pointers since we don't want to define the intermediate Haversack
-    // type with direct dependencies since those direct dependencies would cause
-    // hashes to be asserted on.
-    return HaversackT(internal::CtorSentinel(), FakeCompatibility(),
-                      typename decltype(TraitsOf(htls::meta::type_c<HaversackT>)
-                                            .MemberTupleType())::type());
-  }
-#else
   template <typename HaversackT, typename... SubHaversackTs, typename... Args,
             typename RequiredTypesHaversack =
                 typename decltype(ValidateArgs<HaversackT, SubHaversackTs...>(
@@ -96,13 +84,6 @@ struct HaversackTestUtil {
              (HaversackInstance<SubHaversackTs> && ...) &&
              !std::is_void_v<RequiredTypesHaversack>)
   static HaversackT MakeFakeHaversack(Args&&... args) {
-    // Haversack containing only the direct dependencies to HaversackT.
-    // Also, any direct dependencies in SubHaversackTs that are in HaversackT.
-    // This specifically doesn't include dependencies that are Provided
-    // somewhere.
-    auto direct_deps_haversack =
-        RequiredTypesHaversack(std::forward<Args>(args)...);
-
     using AllDepsHaversack = typename decltype(htls::meta::FromTuple<Haversack>(
         TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
     using AllDepsTuple =
@@ -117,6 +98,17 @@ struct HaversackTestUtil {
               return AllDepsTuple(Ts(SecurityBadge<HaversackTestUtil>())...);
             },
             AsTuple(htls::meta::type_c<AllDepsTuple>)));
+
+#if HAVERSACK_GET_TESTER_MODE > 0
+    return result;
+#else
+
+    // Haversack containing only the direct dependencies to HaversackT.
+    // Also, any direct dependencies in SubHaversackTs that are in HaversackT.
+    // This specifically doesn't include dependencies that are Provided
+    // somewhere.
+    auto direct_deps_haversack =
+        RequiredTypesHaversack(std::forward<Args>(args)...);
 
     // Pointer to non-const `members_` type by copy.
     std::shared_ptr<typename decltype(TraitsOf(
@@ -138,8 +130,8 @@ struct HaversackTestUtil {
         htls::meta::AsTuple(htls::meta::Type(*direct_deps_haversack.members_)));
     result.members_ = std::move(new_members);
     return result;
-  }
 #endif
+  }
 };
 
 }  // namespace internal
