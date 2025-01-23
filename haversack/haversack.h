@@ -143,7 +143,7 @@ class Haversack {
                       htls::meta::MakeBasicTuple(
                           htls::meta::type_c<
                               internal::CoercedCtorArg<UncoercedCtorArgs>>...)),
-                  *cxt.members_, internal::CoerceCtorArg(std::move(args))...) {}
+                  cxt.members_, internal::CoerceCtorArg(std::move(args))...) {}
 
   // Honeypot overload for when the arguments are (incorrectly) not pointers.
   // We use the 'unavailable' attribute to give a better compiler error than
@@ -173,26 +173,27 @@ class Haversack {
   // hierarchy (similar to the hierarchy between base-classes and subclasses).
   template <typename OtherHaversack>
   [[nodiscard]] operator OtherHaversack() &&
+  requires(internal::HaversackInstance<OtherHaversack> &&
+           !std::same_as<Haversack, OtherHaversack> &&
+           OtherHaversack::Traits()
+               .CtorCompatibility(Traits().all_deps,
+                                  htls::meta::BasicTuple<>())
+               .IsCompatible()) {
+    return OtherHaversack(
+        CtorSentinel(),
+        OtherHaversack::Traits().CtorCompatibility(
+            Traits().all_deps, htls::meta::BasicTuple<>()),
+        std::move(members_));
+  }
+
+  template <typename OtherHaversack>
+  [[nodiscard]] operator OtherHaversack() const&
     requires(internal::HaversackInstance<OtherHaversack> &&
              !std::same_as<Haversack, OtherHaversack> &&
              OtherHaversack::Traits()
                  .CtorCompatibility(Traits().all_deps,
                                     htls::meta::BasicTuple<>())
                  .IsCompatible()) {
-    return OtherHaversack(
-        CtorSentinel(),
-        OtherHaversack::Traits().CtorCompatibility(
-            Traits().all_deps, htls::meta::BasicTuple<>()),
-        *members_);
-  }
-  template <typename OtherHaversack>
-  [[nodiscard]] operator OtherHaversack() const&
-        requires(internal::HaversackInstance<OtherHaversack> &&
-                 !std::same_as<Haversack, OtherHaversack> &&
-                 OtherHaversack::Traits()
-                     .CtorCompatibility(Traits().all_deps,
-                                        htls::meta::BasicTuple<>())
-                     .IsCompatible()) {
     Haversack self = *this;
     return static_cast<OtherHaversack>(std::move(self));
   }
@@ -359,17 +360,14 @@ class Haversack {
   }
 
   // Internal use only.
-  explicit Haversack(
-      CtorSentinel,
-      htls::meta::Concept<
-          htls::meta::IsTemplateInstance<internal::CompatibleArgs>> auto
-          compatibility,
-      htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>> auto pt,
-      internal::CoercedCtorArgC auto... added)
-      : members_(std::make_shared<typename decltype(members_)::element_type>(
-            internal::CatAndSortTuples(Traits().MemberTupleType(),
-                                       compatibility, std::move(pt),
-                                       std::move(added)...))) {
+  explicit Haversack(CtorSentinel,
+                     htls::meta::Concept<htls::meta::IsTemplateInstance<
+                         internal::CompatibleArgs>> auto compatibility,
+                     internal::PropagatedTuple auto pt,
+                     internal::CoercedCtorArgC auto... added)
+      : members_(internal::CatAndSortTuples(Traits().MemberTupleType(),
+                                            compatibility, std::move(pt),
+                                            std::move(added)...)) {
     htls::meta::BasicTuple checks =
         Traits().AssertIsValidHaversack(compatibility);
     RunChecks(checks);

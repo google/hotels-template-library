@@ -178,6 +178,23 @@ concept IsComplete = htls::meta::IsValidExpr(
     htls::meta::type_c<T>,
     [](auto t) -> decltype(sizeof(typename decltype(t)::type)) {});
 
+template <typename T>
+struct Holder;
+template <typename T>
+struct DirectPropagatedTupleImpl : std::false_type {};
+template <typename... Ts>
+struct DirectPropagatedTupleImpl<std::tuple<Holder<Ts>...>> : std::true_type {};
+template <typename T>
+struct PtrPropagatedTupleImpl : std::false_type {};
+template <typename... Ts>
+struct PtrPropagatedTupleImpl<std::shared_ptr<const std::tuple<Holder<Ts>...>>>
+    : std::true_type {};
+
+// A std::tuple of Holders or std::shared_ptr of the former.
+template <typename T>
+concept PropagatedTuple =
+    DirectPropagatedTupleImpl<T>::value || PtrPropagatedTupleImpl<T>::value;
+
 }  // namespace internal
 
 template <auto&&...>
@@ -1069,7 +1086,8 @@ auto RearrangeTuple(
     htls::meta::Type<std::tuple<Outputs...>>,
     htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>> auto
         input) {
-  return std::make_tuple(std::move(std::get<Outputs>(input))...);
+  return std::make_shared<const std::tuple<Outputs...>>(
+      std::move(std::get<Outputs>(input))...);
 }
 
 // Combine the PropagatedTuple and the AddedCtorArgs into an instance of
@@ -1086,13 +1104,13 @@ auto RearrangeTuple(
 // another Haversack.
 // - AddedCtorArgs is all the arguments directly passed to the Haversack ctor.
 template <htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>>
-              DesiredTuple>
-DesiredTuple CatAndSortTuples(
+              DesiredTuple,
+          typename... Propagateds>
+std::shared_ptr<const DesiredTuple> CatAndSortTuples(
     htls::meta::Type<DesiredTuple> desired,
     htls::meta::Concept<htls::meta::IsTemplateInstance<CompatibleArgs>> auto
         compatibility,
-    htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>> auto
-        propagated_tuple,
+    std::tuple<Propagateds...> propagated_tuple,
     CoercedCtorArgC auto... added) {
   if constexpr (compatibility.IsCompatible()) {
     return RearrangeTuple(
@@ -1101,7 +1119,30 @@ DesiredTuple CatAndSortTuples(
             std::move(propagated_tuple),
             std::make_tuple(compatibility.Convert(std::move(added))...)));
   } else {
-    return DesiredTuple();
+    return std::make_shared<const DesiredTuple>();
+  }
+}
+template <htls::meta::Concept<htls::meta::IsTemplateInstance<std::tuple>>
+              DesiredTuple,
+          typename... Propagateds>
+std::shared_ptr<const DesiredTuple> CatAndSortTuples(
+    htls::meta::Type<DesiredTuple> desired,
+    htls::meta::Concept<htls::meta::IsTemplateInstance<CompatibleArgs>> auto
+        compatibility,
+    std::shared_ptr<const std::tuple<Propagateds...>> propagated_tuple,
+    CoercedCtorArgC auto... added) {
+  if constexpr (compatibility.IsCompatible()) {
+    if constexpr (desired ==
+                      htls::meta::type_c<
+                          std::remove_cvref_t<decltype(*propagated_tuple)>> &&
+                  sizeof...(added) == 0) {
+      return propagated_tuple;
+    } else {
+      return CatAndSortTuples(desired, compatibility, *propagated_tuple,
+                              std::move(added)...);
+    }
+  } else {
+    return std::make_shared<const DesiredTuple>();
   }
 }
 

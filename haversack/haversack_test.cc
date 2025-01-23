@@ -1018,5 +1018,20 @@ TEST(Haversack, CannotUseMultipleAliases) {
       (void)sizeof(Haversack<STaggedAlias<A, "a">, STaggedAlias<A, "b">>));
 }
 
+TEST(Haversack, DifferentHaversacksWithSameMembersCopyFast) {
+  A a;
+  B b;
+  C c;
+  D d;
+  Haversack<A, B, C, D> deps(&a, &b, &c, &d);
+  Haversack<D, C, B, A> other(&a, &b, &c, &d);
+  EXPECT_NE(internal::HaversackTestUtil::InternalGetMembers(deps).get(),
+            internal::HaversackTestUtil::InternalGetMembers(other).get());
+
+  other = deps;
+  EXPECT_EQ(internal::HaversackTestUtil::InternalGetMembers(deps).get(),
+            internal::HaversackTestUtil::InternalGetMembers(other).get());
+}
+
 }  // namespace
 }  // namespace hotels::haversack

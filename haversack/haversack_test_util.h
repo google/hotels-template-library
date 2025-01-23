@@ -95,7 +95,8 @@ struct HaversackTestUtil {
         CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
         htls::meta::Apply(
             []<typename... Ts>(htls::meta::Type<Ts>... ts) {
-              return AllDepsTuple(Ts(SecurityBadge<HaversackTestUtil>())...);
+              return std::make_shared<const AllDepsTuple>(
+                  Ts(SecurityBadge<HaversackTestUtil>())...);
             },
             AsTuple(htls::meta::type_c<AllDepsTuple>)));
 
@@ -131,6 +132,11 @@ struct HaversackTestUtil {
     result.members_ = std::move(new_members);
     return result;
 #endif
+  }
+
+  template <typename HaversackT>
+  static const auto& InternalGetMembers(const HaversackT& sack) {
+    return sack.members_;
   }
 };
 
