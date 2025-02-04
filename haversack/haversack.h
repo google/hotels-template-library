@@ -20,36 +20,38 @@
 // which is known at compile time, and then that instance can be propagated down
 // the call graph to all consumers.
 //
-// Example:
-//   struct Alpha {};
-//   struct Bravo {};
-//   struct Charlie {};
-//
-//   // A Haversack type can be declared as a using declaration, as a subclass,
-//   // or just inline. Prefer to use the subclass style when a Haversack to get
-//   // better codesearch support and tracebacks; if the Haversack type is only
-//   // used in one place, the inline style is also acceptable.
-//   using LeafHaversack = Haversack<Alpha>;
-//   struct CenterHaversack : Haversack<Bravo, Deps<LeafHaversack>> {
-//     using HaversackT::HaversackT;
-//   };
-//
-//   void LeafFlow(LeafHaversack sack) {
-//     const Alpha& a = sack.Get<Alpha>();
-//   }
-//   void CenterFlow(CenterHaversack sack) {
-//     const Bravo& b = sack.Get<Bravo>();
-//     LeafFlow(sack);
-//   }
-//   void RootFlow(Haversack<Charlie, CenterHaversack> sack) {
-//     const Charlie& c = sack.Get<Charlie>();
-//     CenterFlow(sack);
-//   }
-//
-//
-//   void main() {
-//     RootFlow(Haversack<Calls<RootFlow>>(Alpha{}, Bravo{}, Charlie{}));
-//   }
+/* Example: ********************************************************************
+struct Alpha {};
+struct Bravo {};
+struct Charlie {};
+
+// A Haversack type can be declared as a using declaration, as a subclass,
+// or just inline. Prefer to use the subclass style when a Haversack to get
+// better codesearch support and tracebacks; if the Haversack type is only
+// used in one place, the inline style is also acceptable.
+using LeafHaversack = Haversack<Alpha>;
+struct CenterHaversack : Haversack<Deps<LeafHaversack>, Bravo> {
+  using HaversackT::HaversackT;
+};
+
+void LeafFlow(LeafHaversack sack) {
+  const Alpha& a = sack.Get<Alpha>();
+}
+void CenterFlow(CenterHaversack sack) {
+  const Bravo& b = sack.Get<Bravo>();
+  LeafFlow(sack);
+}
+void RootFlow(Haversack<Deps<CenterHaversack>, Charlie> sack) {
+  const Charlie& c = sack.Get<Charlie>();
+  CenterFlow(sack);
+}
+
+void main() {
+  RootFlow(Haversack<Calls<RootFlow>>(std::make_shared<Alpha>(),
+                                      std::make_shared<Bravo>(),
+                                      std::make_shared<Charlie>()));
+}
+// ****************************************************************************/
 
 #ifndef HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_H_
 #define HOTELS_TEMPLATE_LIBRARY_HAVERSACK_HAVERSACK_H_
