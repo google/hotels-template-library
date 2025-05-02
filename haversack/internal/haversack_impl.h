@@ -1152,7 +1152,7 @@ std::shared_ptr<const DesiredTuple> CatAndSortTuples(
 // handle the different input types...
 template <typename T>
 CoercedCtorArgC auto CoerceCtorArg(T* t) {
-  return SharedProxy<T>(t, [](auto&&...) { /* No-op deleter */ });
+  return SharedProxy<T>(std::shared_ptr<void>(), t);  // Non-owning.
 }
 template <NullablePointer T>
 CoercedCtorArgC auto CoerceCtorArg(T t) {
