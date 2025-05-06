@@ -36,6 +36,9 @@ struct TypeSetCtorSentinel {
   constexpr explicit TypeSetCtorSentinel() {}
 };
 
+template <typename T>
+struct MembershipTester {};
+
 }  // namespace internal_type_set
 
 // Instances of TypeSet are contain a unique set of types. This is enforced by
@@ -44,7 +47,7 @@ struct TypeSetCtorSentinel {
 // This type should only be instantiated by MakeTypeSet because Ts are expected
 // to be ordered (by hash) and unique.
 template <typename... Ts>
-struct TypeSet {
+struct TypeSet : internal_type_set::MembershipTester<Type<Ts>>... {
   constexpr TypeSet()
     requires(sizeof...(Ts) == 0)
   = default;
@@ -304,10 +307,47 @@ constexpr auto TypeSetOperatorImpl(std::index_sequence<indexes...>,
 
 }  // namespace internal_type_set
 
+namespace internal_type_set {
+
+template <typename Deps, typename T>
+using Contains = std::is_base_of<internal_type_set::MembershipTester<T>, Deps>;
+
+template <typename TargetDepsSet, typename NewDep>
+struct AppendIfUnique;
+
+template <typename... TargetDeps, typename NewDep>
+struct AppendIfUnique<TypeSet<TargetDeps...>, TypeSet<NewDep>> {
+  using type =
+      std::conditional_t<Contains<TypeSet<TargetDeps...>, Type<NewDep>>::value,
+                         TypeSet<TargetDeps...>,
+                         TypeSet<TargetDeps..., NewDep>>;
+};
+
+template <typename TargetDepsSet, typename... Args>
+struct Dedupe;
+
+template <typename TargetDepsSet, typename NewDep, typename... MoreDeps>
+struct Dedupe<TargetDepsSet, NewDep, MoreDeps...> {
+  using type = Dedupe<typename AppendIfUnique<TargetDepsSet, NewDep>::type,
+                      MoreDeps...>::type;
+};
+
+template <typename TargetDepsSet>
+struct Dedupe<TargetDepsSet> {
+  using type = TargetDepsSet;
+};
+
+template <typename... Ts>
+consteval auto GetDeupdedSet() {
+  return Dedupe<TypeSet<>, TypeSet<Ts>...>::type::Tuple();
+}
+
+}  // namespace internal_type_set
+
 // True if t is in p.
 template <typename T, typename... Us>
 constexpr auto Contains(Type<T> t, TypeSet<Us...> tuple) {
-  return (... || (t == Type<Us>()));
+  return internal_type_set::Contains<TypeSet<Us...>, Type<T>>::value;
 }
 
 // Append t to sum if t is not in sum.
@@ -315,17 +355,27 @@ constexpr auto Contains(Type<T> t, TypeSet<Us...> tuple) {
 // sum must be a TypeSet and t must be a Type.
 template <typename... Ts, typename T>
 constexpr auto AppendIfUnique(TypeSet<Ts...> sum, Type<T> t) {
-  return sum | MakeTypeSet(t);
+  return internal_type_set::AppendIfUnique<TypeSet<Ts...>,
+                                           Type<T>>::type::Tuple();
 }
 
 // Create a TypeSet instance by removing all duplicates from ts.
 template <typename... Ts>
-constexpr auto MakeTypeSet(Type<Ts>... ts) {
+constexpr auto MakeTypeSet(Type<Ts>...) {
+  // Deduping can be done cheaply, O(N) template
+  // instantiations, so we do it first to avoid more expensive sorting
+  // instantiations.
+  //
+  // If
+  // https://discourse.llvm.org/t/rfc-adding-builtin-for-deduplicating-type-lists/80986
+  // (b/362669344) lands then this can replaced with the clang builtin.
+  constexpr auto deduped_set = internal_type_set::GetDeupdedSet<Ts...>();
+
   return internal_type_set::TypeSetOperatorImpl<
       internal_type_set::SortedTypeInfoCollection<
-          internal_type_set::TypeTuple<Ts...>>,
-      internal_type_set::UniqueMode::kSoFar, sizeof...(Ts)>(
-      std::make_index_sequence<sizeof...(Ts)>(), nullptr);
+          std::remove_cvref_t<decltype(deduped_set)>>,
+      internal_type_set::UniqueMode::kSoFar, size(deduped_set)>(
+      std::make_index_sequence<size(deduped_set)>(), nullptr);
 }
 
 // True if the type of each ts is unique.
@@ -359,12 +409,7 @@ constexpr auto operator|(TypeSet<Ts...> t, TypeSet<Us...> u) {
   } else if constexpr (sizeof...(Us) == 0) {
     return t;
   } else {
-    return internal_type_set::TypeSetOperatorImpl<
-        internal_type_set::SortedTypeInfoCollection<
-            internal_type_set::TypeTuple<Ts...>,
-            internal_type_set::TypeTuple<Us...>>,
-        internal_type_set::UniqueMode::kSoFar, sizeof...(Ts) + sizeof...(Us)>(
-        std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), nullptr);
+    return MakeTypeSet(Type<Ts>()..., Type<Us>()...);
   }
 }
 
