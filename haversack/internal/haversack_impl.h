@@ -829,6 +829,12 @@ consteval auto GetAllDepsFromChildHaversackMetadatas(
                     .all_deps.Tuple()...);
 }
 
+template <htls::meta::Concept<
+    htls::meta::IsTemplateInstance<ChildHaversackMetadata>>... Ts>
+consteval auto GetAllDepsFromChildHaversackMetadatas(htls::meta::BasicTuple<>) {
+  return htls::meta::MakeBasicTuple();
+}
+
 // All types specified in Provides::Value are expected to be passed to the
 // Haversack ctor directly as arguments and not inherited from another Haversack
 // instance.
@@ -970,19 +976,6 @@ consteval auto BuildHaversackTraits(htls::meta::Type<Ts>... ts) {
           return htls::meta::MakeBasicTuple();
         }
       }(ts)...);
-  constexpr auto indirect = htls::meta::Concat([]<typename T>(
-                                                   htls::meta::Type<T> t) {
-    if constexpr (htls::meta::IsTemplateInstance<Deps>(t)) {
-      constexpr auto child_haversacks = GetTypesFromDeps(t);
-      return GetAllDepsFromChildHaversackMetadatas(child_haversacks);
-    } else if constexpr (std::conjunction_v<std::bool_constant<IsComplete<T>>,
-                                            std::is_base_of<CallsBase, T>>) {
-      constexpr auto child_haversacks = GetTypesFromCalls(t);
-      return GetAllDepsFromChildHaversackMetadatas(child_haversacks);
-    } else {
-      return htls::meta::MakeBasicTuple();
-    }
-  }(ts)...);
   constexpr auto child_haversacks = htls::meta::Concat([]<typename T>(
                                                            htls::meta::Type<T>
                                                                t) {
@@ -995,6 +988,11 @@ consteval auto BuildHaversackTraits(htls::meta::Type<Ts>... ts) {
       return htls::meta::MakeBasicTuple();
     }
   }(ts)...);
+  // Compute indirect dependencies by using the 'child_haversacks' tuple that
+  // has already aggregated all ChildHaversackMetadata types from Deps/Calls
+  // directives. This avoids re-calculating GetTypesFromDeps/GetTypesFromCalls.
+  constexpr auto indirect =
+      GetAllDepsFromChildHaversackMetadatas(child_haversacks);
   constexpr auto direct = htls::meta::Concat([&]<typename T>(
                                                  htls::meta::Type<T> t) {
     if constexpr (is_directive(t)) {
@@ -1035,9 +1033,15 @@ consteval auto BuildHaversackTraits(htls::meta::Type<Ts>... ts) {
     return htls::meta::Apply(
         [](auto... ts) { return htls::meta::MakeTypeSet(ts...); }, types);
   };
+  // Compute direct_dep_set first as it's used in checks and returned as a
+  // field in HaversackTraits.
   constexpr htls::meta::TypeSet direct_dep_set = make_type_set(direct);
+  // Combine direct and indirect dependency tuples before making a TypeSet.
+  // This reduces one TypeSet operation (previously was make_type_set(indirect)
+  // then direct_dep_set | indirect_set_tmp) which can help reduce the number of
+  // template instantiations for TypeSetOperatorImpl.
   constexpr htls::meta::TypeSet dep_set =
-      direct_dep_set | make_type_set(indirect);
+      make_type_set(htls::meta::Concat(direct, indirect));
   constexpr htls::meta::TypeSet provide_set = make_type_set(provides);
 
   constexpr bool no_direct_deps_are_provided =
@@ -1065,11 +1069,6 @@ consteval auto BuildHaversackTraits(htls::meta::Type<Ts>... ts) {
   static_assert(no_tags_as_deps, "Don't use Tag types as dependencies.");
 
   constexpr htls::meta::TypeSet aliases_set = make_type_set(aliases);
-  constexpr htls::meta::TypeSet aliased_set = make_type_set(Transform(
-      []<typename T>(htls::meta::Type<T>) {
-        return htls::meta::type_c<typename T::type>;
-      },
-      aliases));
 
   // Failing a static_assert does not interrupt compilation so we still
   // explicitly pass this BuilderSuccessT every time.
