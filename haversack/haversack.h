@@ -307,11 +307,13 @@ class Haversack {
     return std::move(self).template Insert<ExplicitWrappedTypes...>(
         std::move(args)...);
   }
+  template <int&... kDoNotSpecify>
   [[nodiscard]] internal::HaversackInstance auto Insert(
       internal::UncoercedCtorArg auto... args) && {
     return std::move(*this).InsertImpl(
         internal::CoerceCtorArg(std::move(args))...);
   }
+  template <int&... kDoNotSpecify>
   [[nodiscard]] internal::HaversackInstance auto Insert(
       internal::UncoercedCtorArg auto... args) const& {
     Haversack self = *this;  // Make a copy of this.
