@@ -1065,11 +1065,6 @@ consteval auto BuildHaversackTraits(htls::meta::Type<Ts>... ts) {
   static_assert(no_tags_as_deps, "Don't use Tag types as dependencies.");
 
   constexpr htls::meta::TypeSet aliases_set = make_type_set(aliases);
-  constexpr htls::meta::TypeSet aliased_set = make_type_set(Transform(
-      []<typename T>(htls::meta::Type<T>) {
-        return htls::meta::type_c<typename T::type>;
-      },
-      aliases));
 
   // Failing a static_assert does not interrupt compilation so we still
   // explicitly pass this BuilderSuccessT every time.
