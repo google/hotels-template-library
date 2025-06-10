@@ -6,11 +6,17 @@
 
 namespace hotels::haversack {
 
-template <typename HaversackT>
+template <typename HaversackT, typename T = void>
 struct StreamHaversack {
   template <typename Sink>
   friend void AbslStringify(Sink& sink, const StreamHaversack&) {
     auto print_one = [&](auto child_haversack, auto caller, auto parent) {
+      if constexpr (!std::is_void_v<T> &&
+                    !Contains(
+                        htls::meta::type_c<T>,
+                        decltype(child_haversack)::type::Traits().all_deps)) {
+        return;
+      }
       if (caller == htls::meta::type_c<void>) {
         absl::Format(&sink, R"("%s" -> "%s"
 )",
