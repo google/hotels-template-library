@@ -200,6 +200,21 @@ class Haversack {
     return static_cast<OtherHaversack>(std::move(self));
   }
 
+  template <typename OtherHaversack>
+  [[nodiscard]] OtherHaversack Convert() const
+    requires(internal::HaversackInstance<OtherHaversack> &&
+             !std::same_as<Haversack, OtherHaversack> &&
+             OtherHaversack::Traits()
+                 .CtorCompatibility(Traits().all_deps,
+                                    htls::meta::BasicTuple<>())
+                 .IsCompatible())
+  {
+    return OtherHaversack(CtorSentinel(),
+                          OtherHaversack::Traits().CtorCompatibility(
+                              Traits().all_deps, htls::meta::BasicTuple<>()),
+                          members_);
+  }
+
   // Get shared ownership to the T member. The returned value is never null.
   //
   // Prefer the Get method unless the shared ownership is required.
@@ -292,7 +307,8 @@ class Haversack {
   template <typename... ExplicitWrappedTypes>
   [[nodiscard]] internal::HaversackInstance auto Insert(
       internal::ExplicitInsertArg auto... args) &&
-    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args))
+    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args) &&
+             sizeof...(args) > 0)
   {
     return std::move(*this)
         .template ExplicitInsertImpl<ExplicitWrappedTypes...>(
@@ -301,7 +317,8 @@ class Haversack {
   template <typename... ExplicitWrappedTypes>
   [[nodiscard]] internal::HaversackInstance auto Insert(
       internal::ExplicitInsertArg auto... args) const&
-    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args))
+    requires(sizeof...(ExplicitWrappedTypes) == sizeof...(args) &&
+             sizeof...(args) > 0)
   {
     Haversack self = *this;  // Make a copy of this.
     return std::move(self).template Insert<ExplicitWrappedTypes...>(
@@ -310,8 +327,12 @@ class Haversack {
   template <int&... kDoNotSpecify>
   [[nodiscard]] internal::HaversackInstance auto Insert(
       internal::UncoercedCtorArg auto... args) && {
-    return std::move(*this).InsertImpl(
-        internal::CoerceCtorArg(std::move(args))...);
+    if constexpr (sizeof...(args) == 0) {
+      return std::move(*this);
+    } else {
+      return std::move(*this).InsertImpl(
+          internal::CoerceCtorArg(std::move(args))...);
+    }
   }
   template <int&... kDoNotSpecify>
   [[nodiscard]] internal::HaversackInstance auto Insert(

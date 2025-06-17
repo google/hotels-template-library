@@ -14,9 +14,9 @@
 
 #include "haversack/haversack.h"
 
-#include <cstddef>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
@@ -409,6 +409,22 @@ TEST_F(HaversackTest, LRefInsert) {
   Haversack<> base;
   Haversack<Nonmoveable> cxt =
       base.Insert(std::make_shared<Nonmoveable>(100, 200));
+  EXPECT_THAT(cxt.Get<Nonmoveable>().i, 100);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().j, 200);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
+}
+
+TEST_F(HaversackTest, NullaryInsert) {
+  Haversack<Nonmoveable> cxt(std::make_shared<Nonmoveable>(100, 200));
+  cxt = cxt.Insert<>();
+  EXPECT_THAT(cxt.Get<Nonmoveable>().i, 100);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().j, 200);
+  EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
+}
+
+TEST_F(HaversackTest, NullaryInsertRRef) {
+  Haversack<Nonmoveable> cxt(std::make_shared<Nonmoveable>(100, 200));
+  cxt = std::move(cxt).Insert<>();
   EXPECT_THAT(cxt.Get<Nonmoveable>().i, 100);
   EXPECT_THAT(cxt.Get<Nonmoveable>().j, 200);
   EXPECT_THAT(cxt.Get<Nonmoveable>().Getter(), 100);
