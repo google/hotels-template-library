@@ -44,11 +44,6 @@ struct BasicTupleImpl<std::index_sequence<Indexes...>, Ts...>
   explicit constexpr BasicTupleImpl(Args&&... args) {}
 };
 
-// Both template parameter orderings are specified to allow specifying only one.
-template <typename T, std::size_t Index>
-constexpr T get(internal_basic_tuple::IndexedType<Index, T> h) {
-  return {};
-}
 template <std::size_t Index, typename T>
 constexpr T get(internal_basic_tuple::IndexedType<Index, T> h) {
   return {};
