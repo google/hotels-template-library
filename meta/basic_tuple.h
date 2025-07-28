@@ -29,23 +29,56 @@ constexpr auto MakeBasicTuple(Ts&&...);
 
 namespace internal_basic_tuple {
 
-template <std::size_t Index, typename T>
+template <std::size_t Index, class T>
 struct IndexedType {};
 
-template <typename...>
-struct BasicTupleImpl;
-template <std::size_t... Indexes, typename... Ts>
-struct BasicTupleImpl<std::index_sequence<Indexes...>, Ts...>
-    : IndexedType<Indexes, Ts>... {
+template <class IntSeq, class... Ts>
+struct IndexedTypeList;
+template <std::size_t... Is, class... Ts>
+struct IndexedTypeList<std::index_sequence<Is...>, Ts...>
+    : IndexedType<Is, Ts>... {};
+template <std::size_t I, class T>
+constexpr T get_linear(IndexedType<I, T>) {
+  return {};
+}
+
+// Used for SFINAE check that avoids copying the whole type list.
+template <class Derived>
+struct BasicTupleMarker {};
+
+#if __clang__ && __clang_major__ >= 19
+#define HOTELS_USECPP26_PACK_INDEXING 1
+#else
+#define HOTELS_USECPP26_PACK_INDEXING 0
+#endif
+
+template <typename... Ts>
+struct BasicTupleImpl : BasicTupleMarker<BasicTupleImpl<Ts...>> {
   using Base = BasicTupleImpl;
+
+#if HOTELS_USECPP26_PACK_INDEXING
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wc++26-extensions"
+  template <std::size_t I>
+  using TypeAtIndex = Ts...[I];
+#pragma clang diagnostic pop
+#else
+ private:
+  using TypeList =
+      IndexedTypeList<std::make_index_sequence<sizeof...(Ts)>, Ts...>;
+
+ public:
+  template <std::size_t I>
+  using TypeAtIndex = decltype(get_linear<I>(TypeList()));
+#endif
 
   constexpr BasicTupleImpl() = default;
   template <typename... Args>
   explicit constexpr BasicTupleImpl(Args&&... args) {}
 };
 
-template <std::size_t Index, typename T>
-constexpr T get(internal_basic_tuple::IndexedType<Index, T> h) {
+template <std::size_t Index, class T>
+constexpr typename T::template TypeAtIndex<Index> get(BasicTupleMarker<T>) {
   return {};
 }
 
@@ -133,8 +166,7 @@ constexpr bool AnyOfImpl(const F& f, T&& t, std::index_sequence<indexes...>) {
 // `get` is accessing. A single BasicTuple can be safely moved multiple times to
 // move different elements out.
 template <typename... Ts>
-struct BasicTuple final : internal_basic_tuple::BasicTupleImpl<
-                              std::make_index_sequence<sizeof...(Ts)>, Ts...> {
+struct BasicTuple final : internal_basic_tuple::BasicTupleImpl<Ts...> {
   using BasicTuple::Base::Base;
 
   static constexpr auto Indexes() {
@@ -177,23 +209,22 @@ constexpr std::size_t size(const BasicTuple<Ts...>&) {
 // If a pair of "zipped" values are not comparable or the tuples are off
 // different sizes, it is a compilation error. This behavior matches equality
 // for std::tuple.
-template <std::size_t... indexes, typename... As, typename... Bs>
-constexpr bool operator==(const internal_basic_tuple::BasicTupleImpl<
-                              std::index_sequence<indexes...>, As...>& a,
+template <typename... As, typename... Bs>
+constexpr bool operator==(const BasicTuple<As...>& a,
                           const BasicTuple<Bs...>& b) {
   constexpr bool same_size = sizeof...(As) == sizeof...(Bs);
   static_assert(same_size,
                 "Can only compare BasicTuples that are the same size.");
   if constexpr (same_size) {
-    return (... && (get<indexes>(a) == get<indexes>(b)));
+    // We never store any values and get returns T{}, so compare those directly.
+    return (... && (As{} == Bs{}));
   } else {
     return false;
   }
 }
 
-template <std::size_t... indexes, typename... As, typename... Bs>
-constexpr bool operator!=(const internal_basic_tuple::BasicTupleImpl<
-                              std::index_sequence<indexes...>, As...>& a,
+template <typename... As, typename... Bs>
+constexpr bool operator!=(const BasicTuple<As...>& a,
                           const BasicTuple<Bs...>& b) {
   return !(a == b);
 }
@@ -329,5 +360,7 @@ constexpr bool AnyOf(const F& f, T&& t) {
 }
 
 }  // namespace htls::meta
+
+#undef HOTELS_USECPP26_PACK_INDEXING
 
 #endif  // HOTELS_TEMPLATE_LIBRARY_HAVERSACK_INTERNAL_BASIC_TUPLE_H_
