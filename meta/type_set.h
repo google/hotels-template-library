@@ -22,6 +22,7 @@
 #include <type_traits>
 #include <utility>
 
+#include <absl/base/config.h>
 #include "meta/basic_tuple.h"
 #include "meta/type.h"
 
@@ -321,11 +322,22 @@ constexpr auto AppendIfUnique(TypeSet<Ts...> sum, Type<T> t) {
 // Create a TypeSet instance by removing all duplicates from ts.
 template <typename... Ts>
 constexpr auto MakeTypeSet(Type<Ts>... ts) {
+#if ABSL_HAVE_BUILTIN(__builtin_dedup_pack)
+  // When available, __builtin_dedup_pack reduces the size of input to the
+  // sorting operation as an optimization.
+  using deduped_tuple =
+      internal_type_set::TypeTuple<__builtin_dedup_pack<Ts...>...>;
+  return internal_type_set::TypeSetOperatorImpl<
+      internal_type_set::SortedTypeInfoCollection<deduped_tuple>,
+      internal_type_set::UniqueMode::kSoFar, deduped_tuple::Indexes().size()>(
+      deduped_tuple::Indexes(), nullptr);
+#else
   return internal_type_set::TypeSetOperatorImpl<
       internal_type_set::SortedTypeInfoCollection<
           internal_type_set::TypeTuple<Ts...>>,
       internal_type_set::UniqueMode::kSoFar, sizeof...(Ts)>(
       std::make_index_sequence<sizeof...(Ts)>(), nullptr);
+#endif
 }
 
 // True if the type of each ts is unique.
@@ -359,12 +371,23 @@ constexpr auto operator|(TypeSet<Ts...> t, TypeSet<Us...> u) {
   } else if constexpr (sizeof...(Us) == 0) {
     return t;
   } else {
+#if ABSL_HAVE_BUILTIN(__builtin_dedup_pack)
+    // When available, __builtin_dedup_pack reduces the size of input to the
+    // sorting operation as an optimization.
+    using deduped_tuple =
+        internal_type_set::TypeTuple<__builtin_dedup_pack<Ts..., Us...>...>;
+    return internal_type_set::TypeSetOperatorImpl<
+        internal_type_set::SortedTypeInfoCollection<deduped_tuple>,
+        internal_type_set::UniqueMode::kSoFar, deduped_tuple::Indexes().size()>(
+        deduped_tuple::Indexes(), nullptr);
+#else
     return internal_type_set::TypeSetOperatorImpl<
         internal_type_set::SortedTypeInfoCollection<
             internal_type_set::TypeTuple<Ts...>,
             internal_type_set::TypeTuple<Us...>>,
         internal_type_set::UniqueMode::kSoFar, sizeof...(Ts) + sizeof...(Us)>(
         std::make_index_sequence<sizeof...(Ts) + sizeof...(Us)>(), nullptr);
+#endif
   }
 }
 
