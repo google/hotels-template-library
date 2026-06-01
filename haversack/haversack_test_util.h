@@ -75,6 +75,24 @@ struct HaversackTestUtil {
     }
   }
 
+  template <typename HaversackT>
+  static auto MakeEmptyAllDepsHaversack() {
+    using AllDepsHaversack = typename decltype(htls::meta::FromTuple<Haversack>(
+        TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
+    using AllDepsTuple =
+        typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
+                              .MemberTupleType())::type;
+    return AllDepsHaversack(
+        internal::CtorSentinel(),
+        CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
+        htls::meta::Apply(
+            []<typename... Ts>(htls::meta::Type<Ts>... ts) {
+              return std::make_shared<const AllDepsTuple>(
+                  Ts(SecurityBadge<HaversackTestUtil>())...);
+            },
+            AsTuple(htls::meta::type_c<AllDepsTuple>)));
+  }
+
  public:
   template <typename HaversackT, typename... SubHaversackTs, typename... Args,
             typename RequiredTypesHaversack =
@@ -84,21 +102,8 @@ struct HaversackTestUtil {
              (HaversackInstance<SubHaversackTs> && ...) &&
              !std::is_void_v<RequiredTypesHaversack>)
   static HaversackT MakeFakeHaversack(Args&&... args) {
-    using AllDepsHaversack = typename decltype(htls::meta::FromTuple<Haversack>(
-        TraitsOf(htls::meta::type_c<HaversackT>).all_deps.Tuple()))::type;
-    using AllDepsTuple =
-        typename decltype(TraitsOf(htls::meta::type_c<AllDepsHaversack>)
-                              .MemberTupleType())::type;
-    // Instance of AllDepsHaversack, initially only containing nullptrs.
-    AllDepsHaversack result(
-        internal::CtorSentinel(),
-        CompatibleArgs<FakeCompatibilityTag, FakeCompatibilityTag>(),
-        htls::meta::Apply(
-            []<typename... Ts>(htls::meta::Type<Ts>... ts) {
-              return std::make_shared<const AllDepsTuple>(
-                  Ts(SecurityBadge<HaversackTestUtil>())...);
-            },
-            AsTuple(htls::meta::type_c<AllDepsTuple>)));
+    auto result = MakeEmptyAllDepsHaversack<HaversackT>();
+    using AllDepsHaversack = decltype(result);
 
 #if HAVERSACK_GET_TESTER_MODE > 0
     return result;
@@ -134,6 +139,16 @@ struct HaversackTestUtil {
 #endif
   }
 
+  template <typename HaversackT, typename... Args>
+    requires(HaversackInstance<HaversackT>)
+  static HaversackT MakeEmptyHaversack(Args&&... args) {
+    auto result = MakeEmptyAllDepsHaversack<HaversackT>();
+
+    (..., (result = std::move(result).Replace(std::forward<Args>(args))));
+
+    return result;
+  }
+
   template <typename HaversackT>
   static const auto& InternalGetMembers(const HaversackT& sack) {
     return sack.members_;
@@ -161,6 +176,26 @@ template <typename HaversackT, typename... SubHaversackTs, typename... Args>
 HaversackT MakeFakeHaversack(Args&&... args) {
   return internal::HaversackTestUtil::MakeFakeHaversack<HaversackT,
                                                         SubHaversackTs...>(
+      std::forward<Args>(args)...);
+}
+
+// Create an instance of a Haversack for testing with ALL dependencies
+// initialized to nullptr by default. Accessing any omitted dependency will
+// cause death.
+//
+// Arguments can be passed to override specific dependencies.
+//
+// This is useful when you need to pass a Haversack to satisfy a constructor
+// (e.g. in a mock) but want to avoid constructing all direct dependencies,
+// or when you only need a subset of dependencies for a specific test case.
+//
+// ***NOTE***: It's generally preferred to use MakeFakeHaversack (above) to
+// assert at compile time that you have all required dependencies
+// needed for your code under-test.
+template <typename HaversackT, typename... Args>
+  requires(internal::HaversackInstance<HaversackT>)
+HaversackT MakeEmptyHaversack(Args&&... args) {
+  return internal::HaversackTestUtil::MakeEmptyHaversack<HaversackT>(
       std::forward<Args>(args)...);
 }
 
