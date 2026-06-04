@@ -1248,10 +1248,11 @@ struct GetSharedHelper {
     // assert exists to prevent segfaults in tests.
 #ifndef NDEBUG
     if (!IsNullable(GetMatchingWrappedType()) && !value) {
-      HAVERSACK_DIE(
-          "A value for \""
-          << htls::meta::DebugTypeName(htls::meta::type_c<T>) << "\" was not "
-          << "injected with MakeFakeHaversack but is used in this test.");
+      HAVERSACK_DIE("A value for \""
+                    << htls::meta::DebugTypeName(htls::meta::type_c<T>)
+                    << "\" was not "
+                    << "injected with MakeFakeHaversack/MakeEmptyHaversack "
+                       "but is used in this test.");
     }
 #endif
     return value;
