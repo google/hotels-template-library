@@ -52,5 +52,26 @@ TEST(FakeHaversack, MakeFakeHaversackDeathMessage) {
 #endif
 }
 
+TEST(FakeHaversack, MakeEmptyHaversackEmpty) {
+  AHaversack cxt = MakeEmptyHaversack<AHaversack>();
+#ifndef NDEBUG
+  EXPECT_DEATH((void)cxt.Get<A>(),
+               ".*was not injected with MakeFakeHaversack.*");
+#else
+  EXPECT_THAT(&cxt.Get<A>(), testing::IsNull());
+#endif
+}
+
+TEST(FakeHaversack, MakeEmptyHaversackWithArgs) {
+  AHaversack cxt = MakeEmptyHaversack<AHaversack>(std::make_unique<A>(1));
+  EXPECT_EQ(cxt.Get<A>().i, 1);
+  BHaversack b = cxt;
+#ifndef NDEBUG
+  EXPECT_DEATH((void)b.Get<B>(), ".*was not injected with MakeFakeHaversack.*");
+#else
+  EXPECT_THAT(&b.Get<B>(), testing::IsNull());
+#endif
+}
+
 }  // namespace
 }  // namespace hotels::haversack
