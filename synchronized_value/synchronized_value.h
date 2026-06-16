@@ -217,14 +217,20 @@ class SynchronizedValue {
     return reader(*GetViewWhen(predicate));
   }
 
-  // Takes a lambda that takes a const reference to the object, updates it and
-  // then the object is replaced with the one returned from lambda.
+  // Takes a lambda that either
+  // - takes a const reference to the object, or
+  // - no parameter
+  // and then the object is replaced with the one returned from lambda.
   template <typename Updater>
   void UpdateCopy(Updater&& updater) {
+    using ResultType = std::conditional<
+        std::is_convertible_v<Updater, std::function<T()>>,
+        std::invoke_result<Updater>,
+        std::invoke_result<Updater, const ValueType&>>::type::type;
+
     static_assert(
-        std::is_constructible_v<
-            typename LockStrategy::template ValueType<T>,
-            std::invoke_result_t<Updater,const ValueType&>>,
+        std::is_constructible_v<typename LockStrategy::template ValueType<T>,
+                                ResultType>,
         "Invalid updater. Updater must take a const reference of ValueType and "
         "return a value that can be converted to ValueType");
     if constexpr (kCopyUpdatable) {
