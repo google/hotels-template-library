@@ -630,6 +630,19 @@ TEST(FakeHaversack, MakeFakeHaversackWithProvides) {
   EXPECT_EQ(g.Get<G>().i, 4);
 }
 
+TEST(FakeHaversack, MakeEmptyHaversackEmpty) {
+  AHSack cxt = MakeEmptyHaversack<AHSack>();
+  EXPECT_DEBUG_DEATH((void)cxt.Get<A>(),
+                     ".*was not injected with MakeFakeHaversack.*");
+}
+
+TEST(FakeHaversack, MakeEmptyHaversackWithArgs) {
+  AHSack cxt = MakeEmptyHaversack<AHSack>(std::make_unique<A>(1));
+  EXPECT_EQ(cxt.Get<A>().i, 1);
+  EXPECT_DEBUG_DEATH((void)cxt.Get<L>(),
+                     ".*was not injected with MakeFakeHaversack.*");
+}
+
 TEST(HaversackConversion, CanConvertToSubset) {
   Haversack<A, B> sack(std::make_unique<A>(1), std::make_unique<B>(2));
   Haversack<A> child = sack;
