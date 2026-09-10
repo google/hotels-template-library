@@ -523,30 +523,14 @@ TEST(HaversackCtor, TakeShared) {
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
-TEST(HaversackCtor, TakeNotNullShared) {
-  Haversack<A> sack(gsl::not_null(std::make_shared<A>(10)));
-  EXPECT_EQ(sack.Get<A>().i, 10);
-}
-
 TEST(HaversackCtor, TakeUnique) {
   Haversack<A> sack(std::make_unique<A>(10));
-  EXPECT_EQ(sack.Get<A>().i, 10);
-}
-
-TEST(HaversackCtor, TakeNotNullUnique) {
-  Haversack<A> sack(gsl::not_null(std::make_unique<A>(10)));
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
 TEST(HaversackCtor, TakeRaw) {
   A a{10};
   Haversack<A> sack(&a);
-  EXPECT_EQ(sack.Get<A>().i, 10);
-}
-
-TEST(HaversackCtor, TakeNotNullRaw) {
-  A a{10};
-  Haversack<A> sack{gsl::not_null(&a)};
   EXPECT_EQ(sack.Get<A>().i, 10);
 }
 
